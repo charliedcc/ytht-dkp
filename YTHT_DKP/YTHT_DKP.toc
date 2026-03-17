@@ -8,4 +8,5 @@
 Core/DB.lua
 Core/Util.lua
 Core/Main.lua
+Modules/DKPManager.lua
 Modules/LootDetector.lua

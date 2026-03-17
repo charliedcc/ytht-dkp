@@ -93,43 +93,81 @@ local function CreateMainFrame()
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
 
-    -- 表头（装备 / 获得者 / DKP）
-    local headerY = -(FRAME_HEADER_HEIGHT + 8)
+    -- ========== Tab 按钮 ==========
+    local TAB_HEIGHT = 22
+    local tabY = -(FRAME_HEADER_HEIGHT + 4)
 
-    local headerBg = f:CreateTexture(nil, "ARTWORK")
-    headerBg:SetPoint("TOPLEFT", f, "TOPLEFT", PADDING, headerY)
-    headerBg:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PADDING, headerY)
+    local function CreateTabButton(parent, text, xOffset, tabKey)
+        local tab = CreateFrame("Button", nil, parent)
+        tab:SetSize(72, TAB_HEIGHT)
+        tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, tabY)
+        tab.tabKey = tabKey
+        local bg = tab:CreateTexture(nil, "ARTWORK")
+        bg:SetAllPoints()
+        tab.bg = bg
+        local label = tab:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetPoint("CENTER")
+        label:SetText(text)
+        tab.label = label
+        tab:SetScript("OnClick", function() DKP.SwitchTab(tabKey) end)
+        return tab
+    end
+
+    local tabLoot = CreateTabButton(f, "拍卖表", PADDING, "loot")
+    local tabDKP = CreateTabButton(f, "DKP管理", PADDING + 76, "dkp")
+    f.tabs = { loot = tabLoot, dkp = tabDKP }
+    f.activeTab = "loot"
+
+    local contentY = tabY - TAB_HEIGHT - 4
+
+    -- ========== 拍卖表内容 ==========
+    local lootContent = CreateFrame("Frame", nil, f)
+    lootContent:SetPoint("TOPLEFT", f, "TOPLEFT", 0, contentY)
+    lootContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+    f.lootContent = lootContent
+
+    -- 表头（装备 / 获得者 / DKP）
+    local headerBg = lootContent:CreateTexture(nil, "ARTWORK")
+    headerBg:SetPoint("TOPLEFT", lootContent, "TOPLEFT", PADDING, 0)
+    headerBg:SetPoint("TOPRIGHT", lootContent, "TOPRIGHT", -PADDING, 0)
     headerBg:SetHeight(20)
     headerBg:SetColorTexture(HEADER_BG_COLOR.r, HEADER_BG_COLOR.g, HEADER_BG_COLOR.b, HEADER_BG_COLOR.a)
 
-    local hItem = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local hItem = lootContent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     hItem:SetPoint("LEFT", headerBg, "LEFT", ITEM_ICON_SIZE + 6, 0)
     hItem:SetText("装备")
     hItem:SetTextColor(0.7, 0.7, 0.7)
 
-    local hWinner = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local hWinner = lootContent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     hWinner:SetPoint("LEFT", headerBg, "LEFT", ITEM_ICON_SIZE + ITEM_LINK_WIDTH + 10, 0)
     hWinner:SetText("获得者")
     hWinner:SetTextColor(0.7, 0.7, 0.7)
 
-    local hDKP = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local hDKP = lootContent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     hDKP:SetPoint("LEFT", headerBg, "LEFT", ITEM_ICON_SIZE + ITEM_LINK_WIDTH + WINNER_WIDTH + 14, 0)
     hDKP:SetText("DKP")
     hDKP:SetTextColor(0.7, 0.7, 0.7)
 
     -- 滚动区域
-    local scrollFrame = CreateFrame("ScrollFrame", "YTHTDKPScrollFrame", f, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", f, "TOPLEFT", PADDING, headerY - 22)
-    scrollFrame:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -PADDING - 24, PADDING)
+    local scrollFrame = CreateFrame("ScrollFrame", "YTHTDKPScrollFrame", lootContent, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", lootContent, "TOPLEFT", PADDING, -22)
+    scrollFrame:SetPoint("BOTTOMRIGHT", lootContent, "BOTTOMRIGHT", -PADDING - 24, PADDING)
 
     local scrollChild = CreateFrame("Frame", "YTHTDKPScrollChild", scrollFrame)
     scrollChild:SetWidth(FRAME_WIDTH - PADDING * 2 - 24)
-    scrollChild:SetHeight(1)  -- 动态调整
+    scrollChild:SetHeight(1)
     scrollFrame:SetScrollChild(scrollChild)
 
     f.scrollFrame = scrollFrame
     f.scrollChild = scrollChild
-    f.bossFrames = {}  -- Boss区域的UI元素缓存
+    f.bossFrames = {}
+
+    -- ========== DKP管理内容（由DKPManager填充） ==========
+    local dkpContent = CreateFrame("Frame", nil, f)
+    dkpContent:SetPoint("TOPLEFT", f, "TOPLEFT", 0, contentY)
+    dkpContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+    dkpContent:Hide()
+    f.dkpContent = dkpContent
 
     f:Hide()
     return f
@@ -504,8 +542,39 @@ function DKP.ToggleMainFrame()
         DKP.MainFrame:Hide()
     else
         DKP.MainFrame:Show()
-        DKP.RefreshTableUI()
+        if DKP.MainFrame.activeTab == "loot" then
+            DKP.RefreshTableUI()
+        elseif DKP.RefreshDKPUI then
+            DKP.RefreshDKPUI()
+        end
     end
+end
+
+----------------------------------------------------------------------
+-- Tab 切换
+----------------------------------------------------------------------
+function DKP.SwitchTab(tabKey)
+    local f = DKP.MainFrame
+    if not f then return end
+    for key, tab in pairs(f.tabs) do
+        if key == tabKey then
+            tab.bg:SetColorTexture(TITLE_COLOR.r, TITLE_COLOR.g, TITLE_COLOR.b, 0.3)
+            tab.label:SetTextColor(1, 1, 1)
+        else
+            tab.bg:SetColorTexture(0.1, 0.1, 0.15, 0.5)
+            tab.label:SetTextColor(0.5, 0.5, 0.5)
+        end
+    end
+    if tabKey == "loot" then
+        f.lootContent:Show()
+        f.dkpContent:Hide()
+        DKP.RefreshTableUI()
+    elseif tabKey == "dkp" then
+        f.lootContent:Hide()
+        f.dkpContent:Show()
+        if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+    end
+    f.activeTab = tabKey
 end
 
 ----------------------------------------------------------------------
@@ -519,6 +588,14 @@ function DKP.OnInitialized()
     if DKP.db.point and #DKP.db.point == 5 then
         DKP.MainFrame:ClearAllPoints()
         DKP.MainFrame:SetPoint(unpack(DKP.db.point))
+    end
+
+    -- 初始化Tab
+    DKP.SwitchTab("loot")
+
+    -- 初始化DKP管理面板
+    if DKP.InitDKPPanel then
+        DKP.InitDKPPanel()
     end
 
     -- 设置当前副本表格
@@ -553,9 +630,13 @@ function DKP.OnInitialized()
             else
                 DKP.Print("用法: /ytht reset <副本名>")
             end
+        elseif cmd == "dkp" then
+            DKP.MainFrame:Show()
+            DKP.SwitchTab("dkp")
         elseif cmd == "help" then
             DKP.Print("===== YTHT DKP 命令 =====")
             DKP.Print("/ytht            - 显示/隐藏主界面")
+            DKP.Print("/ytht dkp        - 打开DKP管理界面")
             DKP.Print("/ytht status     - 显示当前状态")
             DKP.Print("/ytht reset <名> - 重置指定副本数据")
             DKP.Print("/ytht help       - 显示此帮助")

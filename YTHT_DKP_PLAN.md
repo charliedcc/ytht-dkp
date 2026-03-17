@@ -229,3 +229,199 @@ C_ChatInfo.RegisterAddonMessagePrefix("YTHTDKPAuct")   -- 拍卖专用消息
 - `BiaoGe/Core/BiaoGe.lua` - 主框架、权限检测参考
 - `BiaoGe/Core/DB/DB.lua` - 初始化模式参考
 - `BiaoGe/Core/Module/Receive.lua` - 数据同步参考
+
+---
+
+## 第5阶段：外部同步工具（Rust 桌面应用）
+
+### 背景
+
+WoW 插件**无法直接读写文件**，唯一持久化机制是 SavedVariables（WTF 目录下的 .lua 文件）。
+工会用**金山文档**（KDocs）维护 DKP 总表：https://www.kdocs.cn/l/cqTvo6VQxE7q
+
+需要一个独立桌面应用来桥接「WoW 插件数据」和「金山文档在线表格」。
+
+### WoW SavedVariables 技术要点
+
+**文件位置：**
+- macOS: `/Applications/World of Warcraft/_retail_/WTF/Account/<ACCOUNT>/SavedVariables/YTHT_DKP.lua`
+- Windows: `C:\Program Files (x86)\World of Warcraft\_retail_\WTF\Account\<ACCOUNT>\SavedVariables\YTHT_DKP.lua`
+
+**文件格式：** 标准 Lua 全局变量赋值
+```lua
+YTHT_DKP_DB = {
+    ["players"] = {
+        ["张三"] = {
+            ["dkp"] = 150,
+            ["characters"] = {
+                { ["name"] = "猎人号", ["class"] = "HUNTER" },
+            },
+        },
+    },
+    ["log"] = { ... },
+}
+```
+
+**写入时机：** 仅在登出/reload/断线时写入磁盘。插件无法主动触发写入。
+
+**Rust 解析方案：**
+- `mlua` crate — 嵌入完整 Lua 运行时，直接 `lua.load(file).exec()` 然后读取全局变量。最可靠。
+- 自定义解析器 — SavedVariables 格式很规则（只有 string/number/boolean/table），可以写一个轻量 parser。
+- `full_moon` crate — Lua AST 解析器，可以解析后提取 table literal。
+
+### 金山文档（KDocs）集成方案
+
+金山文档没有公开的、易用的 REST API（开放平台文档在登录墙后面，且处于迁移状态）。
+以下是几种可行方案，按推荐优先级排序：
+
+#### 方案A：Tauri + 内嵌 WebView（推荐）
+
+**原理：** 用 Tauri 构建桌面应用，内嵌一个 WebView 打开金山文档页面。用户在 WebView 内登录一次后，session/cookies 持久化。应用通过注入 JavaScript 与表格 DOM 交互，实现读写。
+
+**优点：**
+- 用户体验最好，登录一次后自动化
+- 不依赖金山的 API（API 文档差、不稳定）
+- Tauri 本身就是 Rust 生态，天然契合
+- WebView 保存 cookies，后续免登录
+
+**缺点：**
+- 依赖金山文档的前端 DOM 结构，版本更新可能导致 JS 注入失效
+- 需要研究金山文档的前端结构来编写注入脚本
+- Tauri WebView 在不同平台行为可能略有差异
+
+**技术栈：** Tauri 2.x + Rust 后端 + WebView
+
+**大致流程：**
+1. 用户首次打开 → WebView 加载金山文档 URL → 用户登录
+2. 登录成功后 cookies 保存在 WebView 存储中
+3. 导出：Rust 读取 SavedVariables → 解析 → 注入 JS 写入表格单元格
+4. 导入：注入 JS 读取表格数据 → 传回 Rust → 写入 SavedVariables .lua 文件
+5. 用户在游戏中 `/reload` 加载更新后的数据
+
+#### 方案B：Playwright/Headless 浏览器自动化
+
+**原理：** 启动一个 headless Chrome/Chromium，用户登录一次后保存 session，后续自动操作表格。
+
+**优点：**
+- 与方案A类似，不依赖 API
+- Playwright 生态成熟，DOM 操作稳定
+- 可以无头运行，适合自动化场景
+
+**缺点：**
+- Playwright 是 Node.js/Python 生态，需要 Rust 调用外部进程
+- 需要捆绑 Chromium（应用体积大 ~150MB+）
+- 或者用 `chromiumoxide` Rust crate（较底层）
+
+**技术栈：** Rust 主进程 + 子进程调用 Playwright（Node.js）或 `chromiumoxide` crate
+
+#### 方案C：剪贴板中转（最简单的降级方案）
+
+**原理：** 应用读取 SavedVariables 后，将 DKP 数据格式化为 TSV（Tab分隔），复制到系统剪贴板。用户手动粘贴到金山文档。反向同理：用户从金山文档复制数据，应用从剪贴板读取并写回 SavedVariables。
+
+**优点：**
+- 实现最简单，不依赖任何外部服务的 API 或 DOM
+- 绝对不会因金山文档更新而失效
+- 可以作为其他方案的 fallback
+
+**缺点：**
+- 需要用户手动操作（复制/粘贴），体验一般
+- 容易出错（粘贴位置不对等）
+
+**技术栈：** Rust + `arboard` crate（跨平台剪贴板）
+
+#### 方案D：金山文档 AirScript（待验证）
+
+**原理：** 金山文档支持 AirScript（轻服务），可以在文档内创建脚本，暴露 HTTP 接口。外部应用通过 HTTP 请求读写表格数据。
+
+**优点：**
+- 如果可行，是最干净的 API 方案
+- 不依赖 DOM 结构
+
+**缺点：**
+- AirScript 文档不全，能力边界不清楚
+- 不确定是否支持 HTTP trigger（需要实际测试）
+- 可能有请求频率限制
+
+**状态：** 需要在金山文档中实际测试 AirScript 的 HTTP 触发器能力。
+
+### Rust 桌面应用架构
+
+```
+ytht-dkp-sync/
+├── Cargo.toml
+├── src/
+│   ├── main.rs                  # 入口
+│   ├── config.rs                # 配置管理（WoW目录、文档URL、账号等）
+│   ├── savedvariables/
+│   │   ├── mod.rs
+│   │   ├── parser.rs            # Lua SavedVariables 解析器
+│   │   ├── writer.rs            # 写回 .lua 文件
+│   │   └── watcher.rs           # 文件变更监听
+│   ├── kdocs/
+│   │   ├── mod.rs
+│   │   ├── webview.rs           # Tauri WebView 集成（方案A）
+│   │   ├── clipboard.rs         # 剪贴板方案（方案C）
+│   │   └── js_inject.rs         # 注入脚本定义
+│   ├── sync/
+│   │   ├── mod.rs
+│   │   ├── export.rs            # SavedVariables → 金山文档
+│   │   ├── import.rs            # 金山文档 → SavedVariables
+│   │   └── diff.rs              # 数据差异对比
+│   └── ui/
+│       ├── mod.rs
+│       └── app.rs               # Tauri 前端交互
+├── src-tauri/                   # Tauri 配置（如果用 Tauri）
+│   └── tauri.conf.json
+└── frontend/                    # Web 前端（Tauri 用）
+    ├── index.html
+    └── main.js
+```
+
+### 应用配置项
+
+```json
+{
+    "wow_path": "/Applications/World of Warcraft",
+    "account_name": "ACCOUNTNAME",
+    "character": "角色名",
+    "realm": "服务器名",
+    "kdocs_url": "https://www.kdocs.cn/l/cqTvo6VQxE7q",
+    "sync_mode": "manual",
+    "last_sync": "2026-03-17T20:00:00Z"
+}
+```
+
+用户首次启动时需要配置：
+1. **WoW 安装目录** — 用于定位 WTF/SavedVariables 路径（可以提供文件浏览器选择）
+2. **账号名** — WTF/Account/ 下的文件夹名
+3. **金山文档链接** — 在线表格的 URL
+
+### 同步流程
+
+**导出（游戏 → 金山文档）：**
+1. 用户在游戏中 `/reload` 或登出 → SavedVariables 写入磁盘
+2. 应用检测到文件变更（或用户点击"同步"按钮）
+3. 解析 `YTHT_DKP.lua` → 提取 players 表
+4. 与上次同步状态对比，找出变更
+5. 通过 WebView/剪贴板 将变更写入金山文档
+
+**导入（金山文档 → 游戏）：**
+1. 用户在应用中点击"从金山文档导入"
+2. 通过 WebView/剪贴板 读取表格数据
+3. 转换为 Lua table 格式
+4. 写入 `YTHT_DKP.lua` 文件（需要 WoW 未运行或即将 /reload）
+5. 用户在游戏中 `/reload` → 插件加载更新后的数据
+
+**关键约束：**
+- SavedVariables 仅在登出/reload时读写，因此同步不是实时的
+- 写入 SavedVariables 文件时需确保 WoW 不会在之后覆盖（最好在 WoW 未运行时写入，或写入后立即 /reload）
+
+### 实施顺序
+
+1. **5.1** — Rust 项目搭建 + SavedVariables 解析器（读取 .lua 文件，输出 JSON）
+2. **5.2** — SavedVariables 写入器（从 JSON 生成 .lua 文件）
+3. **5.3** — 配置管理 + 文件监听
+4. **5.4** — 剪贴板方案（方案C，作为最小可用版本）
+5. **5.5** — Tauri 应用框架 + 基础 UI
+6. **5.6** — WebView 金山文档集成（方案A，登录 + JS 注入读写）
+7. **5.7** — 完整同步逻辑（diff + 双向同步）

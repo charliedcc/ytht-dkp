@@ -41,7 +41,7 @@ local function UpdateInstanceInfo()
           maxPlayers, dynamicDifficulty, isDynamic, instanceID,
           instanceGroupSize, lfgDungeonID = GetInstanceInfo()
 
-    if instanceType == "raid" then
+    if instanceType == "raid" or instanceType == "party" then
         -- 构建副本显示名称（包含难度）
         local displayName = name
         if difficultyName and difficultyName ~= "" then
