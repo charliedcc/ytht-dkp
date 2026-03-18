@@ -23,7 +23,7 @@ local CLASS_NAMES = {
 }
 
 -- UI 常量
-local TOOLBAR_HEIGHT = 30
+local TOOLBAR_HEIGHT = 56
 local ROW_HEIGHT = 26
 local COL_NAME_WIDTH = 120
 local COL_CHARS_WIDTH = 320
@@ -2419,29 +2419,19 @@ function DKP.InitDKPPanel()
     local parent = DKP.MainFrame and DKP.MainFrame.dkpContent
     if not parent then return end
 
-    -- 工具栏
+    -- 工具栏（两排）
     local toolbar = CreateFrame("Frame", nil, parent)
     toolbar:SetPoint("TOPLEFT", parent, "TOPLEFT", PADDING, 0)
     toolbar:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -PADDING, 0)
     toolbar:SetHeight(TOOLBAR_HEIGHT)
 
-    local addBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    addBtn:SetSize(72, 22)
-    addBtn:SetPoint("LEFT", 0, 0)
-    addBtn:SetText("添加玩家")
-    addBtn:SetScript("OnClick", function() ShowAddPlayerDialog() end)
-    parent.addBtn = addBtn
+    local ROW1_Y = -2
+    local ROW2_Y = -28
 
-    local importBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    importBtn:SetSize(72, 22)
-    importBtn:SetPoint("LEFT", addBtn, "RIGHT", 4, 0)
-    importBtn:SetText("导入CSV")
-    importBtn:SetScript("OnClick", function() ShowImportDialog() end)
-    parent.importBtn = importBtn
-
+    -- === 第一排：常用操作 ===
     local bulkBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     bulkBtn:SetSize(72, 22)
-    bulkBtn:SetPoint("LEFT", importBtn, "RIGHT", 4, 0)
+    bulkBtn:SetPoint("TOPLEFT", 0, ROW1_Y)
     bulkBtn:SetText("批量调整")
     bulkBtn:SetScript("OnClick", function() ShowBulkAdjustDialog() end)
     parent.bulkBtn = bulkBtn
@@ -2453,14 +2443,8 @@ function DKP.InitDKPPanel()
     raidBtn:SetScript("OnClick", function() ShowRaidAwardDialog() end)
     parent.raidBtn = raidBtn
 
-    local logBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    logBtn:SetSize(72, 22)
-    logBtn:SetPoint("LEFT", raidBtn, "RIGHT", 4, 0)
-    logBtn:SetText("操作记录")
-    logBtn:SetScript("OnClick", function() ShowLogDialog() end)
-
     local gatherBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    gatherBtn:SetSize(46, 22)
+    gatherBtn:SetSize(50, 22)
     gatherBtn:SetPoint("LEFT", raidBtn, "RIGHT", 4, 0)
     gatherBtn:SetText("集合")
     gatherBtn:SetScript("OnClick", function()
@@ -2489,7 +2473,7 @@ function DKP.InitDKPPanel()
     end)
 
     local dismissBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    dismissBtn:SetSize(46, 22)
+    dismissBtn:SetSize(50, 22)
     dismissBtn:SetPoint("LEFT", gatherBtn, "RIGHT", 4, 0)
     dismissBtn:SetText("解散")
     dismissBtn:SetScript("OnClick", function()
@@ -2515,45 +2499,16 @@ function DKP.InitDKPPanel()
         DKP.RefreshDKPUI()
     end)
 
-    local exportBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    exportBtn:SetSize(46, 22)
-    exportBtn:SetPoint("LEFT", dismissBtn, "RIGHT", 4, 0)
-    exportBtn:SetText("导出")
-    exportBtn:SetScript("OnClick", function()
-        if DKP.ShowExportDialog then DKP.ShowExportDialog() end
-    end)
+    local logBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    logBtn:SetSize(72, 22)
+    logBtn:SetPoint("LEFT", dismissBtn, "RIGHT", 4, 0)
+    logBtn:SetText("操作记录")
+    logBtn:SetScript("OnClick", function() ShowLogDialog() end)
 
-    local settingsBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    settingsBtn:SetSize(46, 22)
-    settingsBtn:SetPoint("LEFT", exportBtn, "RIGHT", 4, 0)
-    settingsBtn:SetText("设置")
-    settingsBtn:SetScript("OnClick", function() ShowSettingsDialog() end)
-
-    local broadcastBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    broadcastBtn:SetSize(56, 22)
-    broadcastBtn:SetPoint("LEFT", settingsBtn, "RIGHT", 4, 0)
-    broadcastBtn:SetText("广播")
-    broadcastBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then
-            DKP.Print("只有管理员可以广播数据")
-            return
-        end
-        if DKP.BroadcastFullSync then
-            DKP.BroadcastFullSync()
-            DKP.Print("已广播全部数据到团队")
-        end
-    end)
-
-    -- 玩家总数
-    local countText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    countText:SetPoint("RIGHT", toolbar, "RIGHT", -130, 0)
-    countText:SetTextColor(0.5, 0.5, 0.5)
-    parent.countText = countText
-
-    -- 搜索框
+    -- 第一排右侧：搜索 + 玩家数
     local searchBox = CreateFrame("EditBox", nil, toolbar, "InputBoxTemplate")
     searchBox:SetSize(120, 20)
-    searchBox:SetPoint("RIGHT", -2, 0)
+    searchBox:SetPoint("TOPRIGHT", -2, ROW1_Y)
     searchBox:SetAutoFocus(false)
     searchBox:SetScript("OnTextChanged", function(self)
         searchText = self:GetText() or ""
@@ -2568,6 +2523,55 @@ function DKP.InitDKPPanel()
     searchLabel:SetPoint("RIGHT", searchBox, "LEFT", -4, 0)
     searchLabel:SetText("搜索:")
     searchLabel:SetTextColor(0.6, 0.6, 0.6)
+
+    local countText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    countText:SetPoint("RIGHT", searchLabel, "LEFT", -8, 0)
+    countText:SetTextColor(0.5, 0.5, 0.5)
+    parent.countText = countText
+
+    -- === 第二排：不常用操作 ===
+    local addBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    addBtn:SetSize(72, 22)
+    addBtn:SetPoint("TOPLEFT", 0, ROW2_Y)
+    addBtn:SetText("添加玩家")
+    addBtn:SetScript("OnClick", function() ShowAddPlayerDialog() end)
+    parent.addBtn = addBtn
+
+    local importBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    importBtn:SetSize(50, 22)
+    importBtn:SetPoint("LEFT", addBtn, "RIGHT", 4, 0)
+    importBtn:SetText("导入")
+    importBtn:SetScript("OnClick", function() ShowImportDialog() end)
+    parent.importBtn = importBtn
+
+    local exportBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    exportBtn:SetSize(50, 22)
+    exportBtn:SetPoint("LEFT", importBtn, "RIGHT", 4, 0)
+    exportBtn:SetText("导出")
+    exportBtn:SetScript("OnClick", function()
+        if DKP.ShowExportDialog then DKP.ShowExportDialog() end
+    end)
+
+    local settingsBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    settingsBtn:SetSize(50, 22)
+    settingsBtn:SetPoint("LEFT", exportBtn, "RIGHT", 4, 0)
+    settingsBtn:SetText("设置")
+    settingsBtn:SetScript("OnClick", function() ShowSettingsDialog() end)
+
+    local broadcastBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    broadcastBtn:SetSize(50, 22)
+    broadcastBtn:SetPoint("LEFT", settingsBtn, "RIGHT", 4, 0)
+    broadcastBtn:SetText("广播")
+    broadcastBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then
+            DKP.Print("只有管理员可以广播数据")
+            return
+        end
+        if DKP.BroadcastFullSync then
+            DKP.BroadcastFullSync()
+            DKP.Print("已广播全部数据到团队")
+        end
+    end)
 
     -- 表头
     local headerY = -TOOLBAR_HEIGHT - 2

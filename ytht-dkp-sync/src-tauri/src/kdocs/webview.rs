@@ -3,10 +3,44 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const KDOCS_WINDOW_LABEL: &str = "kdocs";
 
+/// Helper JS to show a floating overlay message (since alert() is often blocked by KDocs)
+fn overlay_js(id: &str) -> String {
+    format!(
+        r#"
+function __ytht_show_msg(msg, isError) {{
+    var existing = document.getElementById('{id}');
+    if (existing) existing.remove();
+    var div = document.createElement('div');
+    div.id = '{id}';
+    div.style.cssText = 'position:fixed;top:20px;right:20px;max-width:600px;max-height:80vh;overflow:auto;' +
+        'background:' + (isError ? '#2d1b1b' : '#1b2d1b') + ';color:#e0e0e0;' +
+        'border:2px solid ' + (isError ? '#ff4444' : '#44ff44') + ';' +
+        'border-radius:8px;padding:16px;z-index:2147483647;font-family:monospace;font-size:13px;' +
+        'white-space:pre-wrap;box-shadow:0 4px 24px rgba(0,0,0,0.5);';
+    var close = document.createElement('div');
+    close.textContent = '✕ 关闭';
+    close.style.cssText = 'cursor:pointer;text-align:right;color:#aaa;margin-bottom:8px;font-size:12px;';
+    close.onclick = function() {{ div.remove(); }};
+    div.appendChild(close);
+    var content = document.createElement('div');
+    content.textContent = msg;
+    div.appendChild(content);
+    document.body.appendChild(div);
+    // Auto-dismiss after 30 seconds
+    setTimeout(function() {{ if (div.parentNode) div.remove(); }}, 30000);
+}}
+"#,
+        id = id
+    )
+}
+
 #[tauri::command]
 pub async fn open_kdocs(app: AppHandle, url: String) -> Result<(), String> {
+    eprintln!("[kdocs] open_kdocs called, url={}", url);
+
     // If already open, just focus
     if let Some(win) = app.get_webview_window(KDOCS_WINDOW_LABEL) {
+        eprintln!("[kdocs] window already exists, focusing");
         win.set_focus().map_err(|e| e.to_string())?;
         return Ok(());
     }
@@ -16,15 +50,23 @@ pub async fn open_kdocs(app: AppHandle, url: String) -> Result<(), String> {
         .title("金山文档 - YTHT DKP")
         .inner_size(1280.0, 800.0)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            eprintln!("[kdocs] failed to build window: {}", e);
+            e.to_string()
+        })?;
 
+    eprintln!("[kdocs] window created successfully");
     Ok(())
 }
 
 #[tauri::command]
 pub async fn close_kdocs(app: AppHandle) -> Result<(), String> {
+    eprintln!("[kdocs] close_kdocs called");
     if let Some(win) = app.get_webview_window(KDOCS_WINDOW_LABEL) {
         win.close().map_err(|e| e.to_string())?;
+        eprintln!("[kdocs] window closed");
+    } else {
+        eprintln!("[kdocs] no window to close");
     }
     Ok(())
 }
@@ -32,13 +74,22 @@ pub async fn close_kdocs(app: AppHandle) -> Result<(), String> {
 /// Inject JS to explore what APIs are available in the KDocs page
 #[tauri::command]
 pub async fn explore_kdocs_api(app: AppHandle) -> Result<(), String> {
+    eprintln!("[kdocs] explore_kdocs_api called");
+
     let win = app
         .get_webview_window(KDOCS_WINDOW_LABEL)
-        .ok_or("请先打开金山文档窗口")?;
+        .ok_or_else(|| {
+            eprintln!("[kdocs] ERROR: kdocs window not found");
+            "请先打开金山文档窗口".to_string()
+        })?;
 
-    let js = r#"
-(async function() {
-    try {
+    let overlay = overlay_js("__ytht_explore_overlay");
+    let js = format!(
+        r#"
+(function() {{
+    {overlay}
+
+    try {{
         var info = [];
         info.push('=== 金山文档 API 探索 ===');
         info.push('');
@@ -49,97 +100,106 @@ pub async fn explore_kdocs_api(app: AppHandle) -> Result<(), String> {
 
         var app = window.Application || window.application;
 
-        if (app) {
+        if (app) {{
             info.push('');
             info.push('[Application 对象]');
-            try {
+            try {{
                 var keys = Object.getOwnPropertyNames(app).slice(0, 30);
                 info.push('属性: ' + keys.join(', '));
-            } catch(e) {
+            }} catch(e) {{
                 info.push('获取属性失败: ' + e.message);
-            }
+            }}
 
-            try {
+            try {{
                 var wb = app.ActiveWorkbook;
-                if (wb) {
+                if (wb) {{
                     info.push('');
                     info.push('[工作簿]');
                     info.push('ActiveWorkbook: 存在');
 
                     var sheet = wb.ActiveSheet;
-                    if (sheet) {
+                    if (sheet) {{
                         info.push('');
                         info.push('[活动工作表]');
                         info.push('Name: ' + (sheet.Name || '未知'));
-                        try {
+                        try {{
                             var sheetKeys = Object.getOwnPropertyNames(sheet).slice(0, 30);
                             info.push('属性: ' + sheetKeys.join(', '));
-                        } catch(e) {}
+                        }} catch(e) {{}}
 
                         // Try reading A1
-                        try {
+                        try {{
                             var cell = sheet.Range('A1');
                             var val = cell.Value2 !== undefined ? cell.Value2 : cell.Value;
                             info.push('');
                             info.push('[单元格测试 A1]');
                             info.push('Value: ' + JSON.stringify(val));
-                        } catch(e) {
+                        }} catch(e) {{
                             info.push('读取A1失败: ' + e.message);
-                        }
+                        }}
 
                         // Try writing a test value
-                        try {
+                        try {{
                             sheet.Range('A1').Value2 = 'API测试';
                             info.push('写入A1测试: 成功 (值: API测试)');
-                        } catch(e) {
+                        }} catch(e) {{
                             info.push('写入A1失败: ' + e.message);
-                        }
-                    } else {
+                        }}
+                    }} else {{
                         info.push('ActiveSheet: 不存在');
-                    }
+                    }}
 
                     // Sheet count
-                    try {
-                        if (wb.Sheets) {
+                    try {{
+                        if (wb.Sheets) {{
                             info.push('');
                             info.push('[工作表列表]');
                             var count = wb.Sheets.Count;
                             info.push('数量: ' + count);
-                            for (var i = 1; i <= Math.min(count, 10); i++) {
+                            for (var i = 1; i <= Math.min(count, 10); i++) {{
                                 info.push('  Sheet ' + i + ': ' + wb.Sheets.Item(i).Name);
-                            }
-                        }
-                    } catch(e) {
+                            }}
+                        }}
+                    }} catch(e) {{
                         info.push('获取工作表列表失败: ' + e.message);
-                    }
-                } else {
+                    }}
+                }} else {{
                     info.push('ActiveWorkbook: 不存在');
-                }
-            } catch(e) {
+                }}
+            }} catch(e) {{
                 info.push('工作簿探索错误: ' + e.message);
-            }
-        } else {
+            }}
+        }} else {{
             info.push('');
             info.push('未找到 Application 对象，搜索其他全局变量...');
-            var relevant = Object.keys(window).filter(function(k) {
+            var relevant = Object.keys(window).filter(function(k) {{
                 var kl = k.toLowerCase();
                 return (kl.includes('app') || kl.includes('sheet') ||
                         kl.includes('book') || kl.includes('cell') ||
                         kl.includes('wps') || kl.includes('kdoc') ||
                         kl.includes('editor') || kl.includes('spread')) &&
                        !kl.startsWith('webkit') && !kl.startsWith('__');
-            });
+            }});
             info.push('相关变量: ' + (relevant.length > 0 ? relevant.join(', ') : '(无)'));
-        }
+        }}
 
-        alert(info.join('\n'));
-    } catch(e) {
-        alert('探索失败: ' + e.message + '\n' + e.stack);
-    }
-})();
-"#;
+        console.log('[YTHT-DKP]', info.join('\n'));
+        __ytht_show_msg(info.join('\n'), false);
+    }} catch(e) {{
+        var errMsg = '探索失败: ' + e.message + '\n' + e.stack;
+        console.error('[YTHT-DKP]', errMsg);
+        __ytht_show_msg(errMsg, true);
+    }}
+}})();
+"#,
+        overlay = overlay
+    );
 
-    win.eval(js).map_err(|e| e.to_string())?;
+    win.eval(&js).map_err(|e| {
+        eprintln!("[kdocs] eval failed: {}", e);
+        e.to_string()
+    })?;
+    eprintln!("[kdocs] explore JS injected successfully");
     Ok(())
 }
 
@@ -150,9 +210,18 @@ pub async fn push_players_to_kdocs(
     db: DkpDatabase,
     sheet_index: usize,
 ) -> Result<(), String> {
+    eprintln!(
+        "[kdocs] push_players_to_kdocs called, sheet_index={}, players={}",
+        sheet_index,
+        db.players.len()
+    );
+
     let win = app
         .get_webview_window(KDOCS_WINDOW_LABEL)
-        .ok_or("请先打开金山文档窗口")?;
+        .ok_or_else(|| {
+            eprintln!("[kdocs] ERROR: kdocs window not found");
+            "请先打开金山文档窗口".to_string()
+        })?;
 
     fn class_cn(c: &str) -> &str {
         match c {
@@ -202,9 +271,12 @@ pub async fn push_players_to_kdocs(
 
     let data_json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
 
+    let overlay = overlay_js("__ytht_push_overlay");
     let js = format!(
         r#"
-(async function() {{
+(function() {{
+    {overlay}
+
     try {{
         var app = window.Application || window.application;
         if (!app) throw new Error('未找到 Application API，请确保文档已完全加载');
@@ -236,17 +308,26 @@ pub async fn push_players_to_kdocs(
             }}
         }}
 
-        alert('成功写入 ' + data.length + ' 名玩家数据到工作表「' + sheet.Name + '」');
+        var msg = '成功写入 ' + data.length + ' 名玩家数据到工作表「' + sheet.Name + '」';
+        console.log('[YTHT-DKP]', msg);
+        __ytht_show_msg(msg, false);
     }} catch(e) {{
-        alert('写入失败: ' + e.message);
+        var errMsg = '写入失败: ' + e.message;
+        console.error('[YTHT-DKP]', errMsg);
+        __ytht_show_msg(errMsg, true);
     }}
 }})();
 "#,
+        overlay = overlay,
         sheet_idx = sheet_index,
         data_json = data_json,
     );
 
-    win.eval(&js).map_err(|e| e.to_string())?;
+    win.eval(&js).map_err(|e| {
+        eprintln!("[kdocs] eval failed: {}", e);
+        e.to_string()
+    })?;
+    eprintln!("[kdocs] push_players JS injected successfully");
     Ok(())
 }
 
@@ -257,9 +338,18 @@ pub async fn push_log_to_kdocs(
     db: DkpDatabase,
     sheet_index: usize,
 ) -> Result<(), String> {
+    eprintln!(
+        "[kdocs] push_log_to_kdocs called, sheet_index={}, log_entries={}",
+        sheet_index,
+        db.log.len()
+    );
+
     let win = app
         .get_webview_window(KDOCS_WINDOW_LABEL)
-        .ok_or("请先打开金山文档窗口")?;
+        .ok_or_else(|| {
+            eprintln!("[kdocs] ERROR: kdocs window not found");
+            "请先打开金山文档窗口".to_string()
+        })?;
 
     let data: Vec<serde_json::Value> = db
         .log
@@ -293,9 +383,12 @@ pub async fn push_log_to_kdocs(
 
     let data_json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
 
+    let overlay = overlay_js("__ytht_push_overlay");
     let js = format!(
         r#"
-(async function() {{
+(function() {{
+    {overlay}
+
     try {{
         var app = window.Application || window.application;
         if (!app) throw new Error('未找到 Application API，请确保文档已完全加载');
@@ -329,16 +422,25 @@ pub async fn push_log_to_kdocs(
             sheet.Cells(row, 7).Value2 = data[i].reversed ? '是' : '';
         }}
 
-        alert('成功写入 ' + data.length + ' 条操作记录到工作表「' + sheet.Name + '」');
+        var msg = '成功写入 ' + data.length + ' 条操作记录到工作表「' + sheet.Name + '」';
+        console.log('[YTHT-DKP]', msg);
+        __ytht_show_msg(msg, false);
     }} catch(e) {{
-        alert('写入失败: ' + e.message);
+        var errMsg = '写入失败: ' + e.message;
+        console.error('[YTHT-DKP]', errMsg);
+        __ytht_show_msg(errMsg, true);
     }}
 }})();
 "#,
+        overlay = overlay,
         sheet_idx = sheet_index,
         data_json = data_json,
     );
 
-    win.eval(&js).map_err(|e| e.to_string())?;
+    win.eval(&js).map_err(|e| {
+        eprintln!("[kdocs] eval failed: {}", e);
+        e.to_string()
+    })?;
+    eprintln!("[kdocs] push_log JS injected successfully");
     Ok(())
 }
