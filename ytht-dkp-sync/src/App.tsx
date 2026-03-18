@@ -63,7 +63,7 @@ const TYPE_NAMES: Record<string, string> = {
   award: "加分", deduct: "扣分", set: "设置", reverse: "冲红",
 };
 
-type TabKey = "config" | "players" | "log";
+type TabKey = "config" | "players" | "log" | "kdocs";
 
 function App() {
   const [tab, setTab] = useState<TabKey>("config");
@@ -164,6 +164,7 @@ function App() {
           <button className={tab === "config" ? "active" : ""} onClick={() => setTab("config")}>配置</button>
           <button className={tab === "players" ? "active" : ""} onClick={() => setTab("players")}>DKP 数据</button>
           <button className={tab === "log" ? "active" : ""} onClick={() => setTab("log")}>操作记录</button>
+          <button className={tab === "kdocs" ? "active" : ""} onClick={() => setTab("kdocs")}>金山文档</button>
         </nav>
       </header>
 
@@ -309,6 +310,110 @@ function App() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {tab === "kdocs" && (
+          <div className="config-panel">
+            <div className="form-group">
+              <label>金山文档 URL</label>
+              <div className="sv-path">{config.kdocs_url || "请先在配置页设置金山文档 URL"}</div>
+            </div>
+
+            <div className="button-row">
+              <button
+                className="btn-primary"
+                disabled={!config.kdocs_url}
+                onClick={async () => {
+                  try {
+                    await invoke("open_kdocs", { url: config.kdocs_url });
+                    setStatus("金山文档窗口已打开，请先登录");
+                  } catch (e) {
+                    setStatus(`打开失败: ${e}`);
+                  }
+                }}
+              >
+                打开文档
+              </button>
+              <button
+                className="btn-primary"
+                onClick={async () => {
+                  try {
+                    await invoke("close_kdocs");
+                    setStatus("金山文档窗口已关闭");
+                  } catch (e) {
+                    setStatus(`关闭失败: ${e}`);
+                  }
+                }}
+              >
+                关闭文档
+              </button>
+            </div>
+
+            <div style={{ marginTop: 24, borderTop: "1px solid #0f3460", paddingTop: 16 }}>
+              <div className="form-group">
+                <label>API 测试</label>
+                <p style={{ color: "#668899", fontSize: 12, marginBottom: 8 }}>
+                  请先打开文档并登录，等待文档完全加载后再操作
+                </p>
+              </div>
+              <div className="button-row">
+                <button
+                  className="btn-primary"
+                  onClick={async () => {
+                    try {
+                      await invoke("explore_kdocs_api");
+                      setStatus("已注入探索脚本，请查看弹窗");
+                    } catch (e) {
+                      setStatus(`探索失败: ${e}`);
+                    }
+                  }}
+                >
+                  探索 API
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 24, borderTop: "1px solid #0f3460", paddingTop: 16 }}>
+              <div className="form-group">
+                <label>数据推送</label>
+                <p style={{ color: "#668899", fontSize: 12, marginBottom: 8 }}>
+                  {db
+                    ? `已加载: ${Object.keys(db.players).length} 名玩家, ${db.log.length} 条记录`
+                    : "请先在配置页加载 DKP 数据"}
+                </p>
+              </div>
+              <div className="button-row">
+                <button
+                  className="btn-primary"
+                  disabled={!db}
+                  onClick={async () => {
+                    try {
+                      await invoke("push_players_to_kdocs", { db, sheetIndex: 1 });
+                      setStatus("已推送玩家数据到 Sheet 1");
+                    } catch (e) {
+                      setStatus(`推送失败: ${e}`);
+                    }
+                  }}
+                >
+                  推送 DKP 到 Sheet 1
+                </button>
+                <button
+                  className="btn-primary"
+                  disabled={!db}
+                  onClick={async () => {
+                    try {
+                      await invoke("push_log_to_kdocs", { db, sheetIndex: 2 });
+                      setStatus("已推送操作记录到 Sheet 2");
+                    } catch (e) {
+                      setStatus(`推送失败: ${e}`);
+                    }
+                  }}
+                >
+                  推送记录到 Sheet 2
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>
