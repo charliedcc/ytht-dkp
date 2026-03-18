@@ -352,34 +352,10 @@ function App() {
 
             <div style={{ marginTop: 24, borderTop: "1px solid #0f3460", paddingTop: 16 }}>
               <div className="form-group">
-                <label>API 测试</label>
-                <p style={{ color: "#668899", fontSize: 12, marginBottom: 8 }}>
-                  请先打开文档并登录，等待文档完全加载后再操作
-                </p>
-              </div>
-              <div className="button-row">
-                <button
-                  className="btn-primary"
-                  onClick={async () => {
-                    try {
-                      await invoke("explore_kdocs_api");
-                      setStatus("已注入探索脚本，请查看弹窗");
-                    } catch (e) {
-                      setStatus(`探索失败: ${e}`);
-                    }
-                  }}
-                >
-                  探索 API
-                </button>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 24, borderTop: "1px solid #0f3460", paddingTop: 16 }}>
-              <div className="form-group">
-                <label>数据推送</label>
+                <label>数据同步</label>
                 <p style={{ color: "#668899", fontSize: 12, marginBottom: 8 }}>
                   {db
-                    ? `已加载: ${Object.keys(db.players).length} 名玩家, ${db.log.length} 条记录`
+                    ? `已加载: ${Object.keys(db.players).length} 名玩家, ${db.log.length} 条记录。点击复制后，在金山文档中选中 A1 单元格，按 Ctrl+V 粘贴。`
                     : "请先在配置页加载 DKP 数据"}
                 </p>
               </div>
@@ -389,28 +365,28 @@ function App() {
                   disabled={!db}
                   onClick={async () => {
                     try {
-                      await invoke("push_players_to_kdocs", { db, sheetIndex: 1 });
-                      setStatus("已推送玩家数据到 Sheet 1");
+                      const msg = await invoke<string>("copy_players_tsv", { db });
+                      setStatus(msg);
                     } catch (e) {
-                      setStatus(`推送失败: ${e}`);
+                      setStatus(`复制失败: ${e}`);
                     }
                   }}
                 >
-                  推送 DKP 到 Sheet 1
+                  复制 DKP 数据
                 </button>
                 <button
                   className="btn-primary"
                   disabled={!db}
                   onClick={async () => {
                     try {
-                      await invoke("push_log_to_kdocs", { db, sheetIndex: 2 });
-                      setStatus("已推送操作记录到 Sheet 2");
+                      const msg = await invoke<string>("copy_log_tsv", { db });
+                      setStatus(msg);
                     } catch (e) {
-                      setStatus(`推送失败: ${e}`);
+                      setStatus(`复制失败: ${e}`);
                     }
                   }}
                 >
-                  推送记录到 Sheet 2
+                  复制操作记录
                 </button>
               </div>
             </div>

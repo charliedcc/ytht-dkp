@@ -765,6 +765,10 @@ function DKP.OnInitialized()
     if not next(DKP.db.admins) then
         DKP.db.admins[DKP.playerName] = true
     end
+    -- 首位管理员自动成为主管理员（不可被远程移除）
+    if not DKP.db.masterAdmin and next(DKP.db.admins) then
+        DKP.db.masterAdmin = DKP.playerName
+    end
 
     -- 创建主框架
     DKP.MainFrame = CreateMainFrame()

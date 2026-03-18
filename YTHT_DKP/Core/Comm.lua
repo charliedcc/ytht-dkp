@@ -281,7 +281,8 @@ function DKP.BroadcastAdminSync()
     for name in pairs(admins) do
         table.insert(names, name)
     end
-    local msg = table.concat({ "ADMIN_SYNC", table.concat(names, ";") }, MSG_SEP)
+    local master = DKP.db.masterAdmin or ""
+    local msg = table.concat({ "ADMIN_SYNC", table.concat(names, ";"), master }, MSG_SEP)
     DKP.SendDKPMessage(msg)
 end
 
@@ -293,29 +294,34 @@ local function HandleAdminSync(parts, sender)
     for name in namesStr:gmatch("[^;]+") do
         newAdmins[name] = true
     end
+    local newMaster = parts[3] or ""
+    if newMaster == "" then newMaster = nil end
 
-    -- 检查发送者是否是管理员（或当前无管理员列表时接受）
     local senderShort = sender:match("^([^%-]+)") or sender
     local currentAdmins = DKP.db.admins or {}
     local hasAdmins = next(currentAdmins) ~= nil
 
     if hasAdmins then
-        -- 只接受来自管理员的同步
+        -- 只接受来自已知管理员的同步
         if not currentAdmins[senderShort] then return end
-        -- 如果本地是管理员且列表不同，提示确认
-        if DKP.IsOfficer() then
-            -- 检查是否相同
-            local same = true
-            for name in pairs(newAdmins) do
-                if not currentAdmins[name] then same = false; break end
-            end
-            if same then
-                for name in pairs(currentAdmins) do
-                    if not newAdmins[name] then same = false; break end
-                end
-            end
-            if same then return end  -- 相同不处理
-            -- 管理员间冲突：接受（最后写入者胜）
+
+        -- 保护主管理员：新列表必须包含本地主管理员
+        if DKP.db.masterAdmin and not newAdmins[DKP.db.masterAdmin] then
+            DKP.Print("|cffFF4444拒绝管理员同步: 不允许移除主管理员 " .. DKP.db.masterAdmin .. "|r")
+            return
+        end
+
+        -- 保护自己：如果我是管理员，新列表不能把我移除
+        if DKP.IsOfficer() and not newAdmins[DKP.playerName] then
+            DKP.Print("|cffFF4444拒绝管理员同步: 不允许移除自己的管理员权限|r")
+            return
+        end
+
+        -- 不接受更改本地 masterAdmin（只有本地首次设置时才接受）
+    else
+        -- 首次接收管理员列表：接受 masterAdmin
+        if newMaster then
+            DKP.db.masterAdmin = newMaster
         end
     end
 

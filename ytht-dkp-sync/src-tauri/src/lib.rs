@@ -9,6 +9,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
@@ -19,9 +20,8 @@ pub fn run() {
             commands::check_sv_path,
             kdocs::webview::open_kdocs,
             kdocs::webview::close_kdocs,
-            kdocs::webview::explore_kdocs_api,
-            kdocs::webview::push_players_to_kdocs,
-            kdocs::webview::push_log_to_kdocs,
+            kdocs::webview::copy_players_tsv,
+            kdocs::webview::copy_log_tsv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

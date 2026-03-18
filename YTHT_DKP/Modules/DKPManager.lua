@@ -228,11 +228,7 @@ function DKP.RenamePlayer(oldName, newName)
             entry.player = newName
         end
     end
-    -- 同步更新管理员列表
-    if DKP.db.admins and DKP.db.admins[oldName] then
-        DKP.db.admins[oldName] = nil
-        DKP.db.admins[newName] = true
-    end
+    -- 注意: admins 按角色名(UnitName)存储，与DKP玩家名无关，不需要同步
     RebuildCharLookup()
     DKP.Print("玩家重命名: " .. oldName .. " -> " .. newName)
     return true
@@ -912,6 +908,24 @@ local function ImportDKPData(text)
     local newCount, updateCount = 0, 0
     for line in text:gmatch("[^\r\n]+") do
         line = line:match("^%s*(.-)%s*$")
+        -- 解析管理员备份信息
+        local adminStr = line:match("^# ADMINS:(.+)$")
+        if adminStr then
+            if not DKP.db.admins then DKP.db.admins = {} end
+            for name in adminStr:gmatch("[^,]+") do
+                name = name:match("^%s*(.-)%s*$")
+                if name ~= "" then DKP.db.admins[name] = true end
+            end
+            DKP.Print("已恢复管理员列表")
+        end
+        local masterStr = line:match("^# MASTER:(.+)$")
+        if masterStr then
+            masterStr = masterStr:match("^%s*(.-)%s*$")
+            if masterStr ~= "" then
+                DKP.db.masterAdmin = masterStr
+                DKP.Print("已恢复主管理员: " .. masterStr)
+            end
+        end
         if line ~= "" and not line:match("^#") then
             local parts = {}
             for part in line:gmatch("[^,]+") do
@@ -1372,10 +1386,10 @@ local function ShowSettingsDialog()
         d.diffMythicBox:SetNumeric(true)
         y = y - 28
 
-        -- 管理员列表
+        -- 管理员列表（按角色名）
         local adminLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         adminLabel:SetPoint("TOPLEFT", 20, y)
-        adminLabel:SetText("管理员:")
+        adminLabel:SetText("管理员: |cff888888(角色名)|r")
 
         -- 管理员列表容器（可点击移除）
         local adminListFrame = CreateFrame("Frame", nil, d)
@@ -1474,10 +1488,17 @@ local function ShowSettingsDialog()
                 hl:SetAllPoints()
                 hl:SetColorTexture(0.8, 0.2, 0.2, 0.3)
 
+                local isMaster = (name == DKP.db.masterAdmin)
+                local isSelf = (name == DKP.playerName)
+
                 local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                 text:SetPoint("LEFT", 6, 0)
-                text:SetText(name)
-                if name == DKP.playerName then
+                local displayName = name
+                if isMaster then displayName = name .. " [主]" end
+                text:SetText(displayName)
+                if isMaster then
+                    text:SetTextColor(1, 0.8, 0)    -- 主管理员金色
+                elseif isSelf then
                     text:SetTextColor(0.3, 1, 0.3)  -- 自己绿色
                 else
                     text:SetTextColor(0.9, 0.9, 0.9)
@@ -1487,7 +1508,11 @@ local function ShowSettingsDialog()
                 btn:SetWidth(math.max(w, 40))
 
                 btn:SetScript("OnClick", function()
-                    if name == DKP.playerName then
+                    if isMaster then
+                        DKP.Print("不能移除主管理员")
+                        return
+                    end
+                    if isSelf then
                         DKP.Print("不能移除自己")
                         return
                     end
@@ -1610,6 +1635,15 @@ function DKP.ShowExportDialog()
         local function ExportDKPData()
             local lines = {}
             table.insert(lines, "# DKP数据导出 - " .. date("%Y-%m-%d %H:%M:%S"))
+            -- 导出管理员列表（用于备份恢复）
+            if DKP.db.admins and next(DKP.db.admins) then
+                local adminNames = {}
+                for name in pairs(DKP.db.admins) do table.insert(adminNames, name) end
+                table.insert(lines, "# ADMINS:" .. table.concat(adminNames, ","))
+            end
+            if DKP.db.masterAdmin then
+                table.insert(lines, "# MASTER:" .. DKP.db.masterAdmin)
+            end
             table.insert(lines, "# 格式: 玩家名,DKP,角色1:职业1,角色2:职业2,...")
             if DKP.db and DKP.db.players then
                 for name, data in pairs(DKP.db.players) do
