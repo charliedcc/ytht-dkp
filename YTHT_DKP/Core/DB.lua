@@ -20,8 +20,26 @@ local defaults = {
         gatherPoints = 10,
         dismissPoints = 10,
         bossKillPoints = 5,
+        -- Boss击杀加分开关 (true=启用, false=禁用)
+        enableBossKillBonus = true,
+        -- 按难度配置加分 (difficultyID -> 分值, 0或nil表示该难度不加分)
+        -- WoW 难度ID: 1=普通, 2=英雄, 3=10人, 4=25人, 14=普通(新), 15=英雄(新), 16=史诗, 17=随机
+        bossKillPointsByDifficulty = {
+            -- [17] = 0,  -- 随机团: 不加分
+            -- [14] = 0,  -- 普通: 不加分
+            -- [15] = 5,  -- 英雄: 5分
+            -- [16] = 10, -- 史诗: 10分
+        },
+        -- 开荒额外加分 (首杀额外加分)
+        progressionBonusPoints = 0,
+        -- 擦屁股分 (每次团灭额外加分, 击杀时结算)
+        wipeBonus = 0,
+        -- 擦屁股分上限 (最多计算N次团灭)
+        wipeBonusMax = 10,
         defaultStartingBid = 10,
         auctionDuration = 30,
+        minBidIncrement = 1,
+        auctionExtendTime = 10,
     },
     -- DKP 玩家数据
     players = {},
@@ -31,8 +49,12 @@ local defaults = {
     session = {
         active = false,
         gathered = false,
-        bossKills = {},
+        bossKills = {},     -- encounterID -> true (本次活动已加分的boss)
+        wipeCounts = {},    -- encounterID -> 团灭次数
+        firstKills = {},    -- encounterID -> true (历史首杀记录，不随session重置)
     },
+    -- 拍卖历史
+    auctionHistory = {},
     -- 表格数据：按副本 -> Boss -> 装备记录
     -- sheets[instanceName] = {
     --     bosses = {
@@ -58,13 +80,24 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
         if not YTHT_DKP_DB then
             YTHT_DKP_DB = {}
         end
-        -- 填充默认值
+        -- 填充默认值（包括嵌套table的子字段）
         for k, v in pairs(defaults) do
             if YTHT_DKP_DB[k] == nil then
                 if type(v) == "table" then
                     YTHT_DKP_DB[k] = CopyTable(v)
                 else
                     YTHT_DKP_DB[k] = v
+                end
+            elseif type(v) == "table" and type(YTHT_DKP_DB[k]) == "table" then
+                -- 填充子表中缺失的字段（用于版本升级添加新选项）
+                for sk, sv in pairs(v) do
+                    if YTHT_DKP_DB[k][sk] == nil then
+                        if type(sv) == "table" then
+                            YTHT_DKP_DB[k][sk] = CopyTable(sv)
+                        else
+                            YTHT_DKP_DB[k][sk] = sv
+                        end
+                    end
                 end
             end
         end

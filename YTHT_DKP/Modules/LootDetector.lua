@@ -119,8 +119,98 @@ f:SetScript("OnEvent", function(self, event, ...)
                 -- 标记击杀
                 DKP.MarkBossKilled(instanceName, encounterID)
             end
+
+            -- Boss击杀自动加分
+            if DKP.db.session.active and DKP.IsOfficer and DKP.IsOfficer()
+               and DKP.db.options.enableBossKillBonus then
+                if not DKP.db.session.bossKills[encounterID] then
+                    -- 计算基础分值（按难度配置，未配置则用全局默认值）
+                    local diffPoints = DKP.db.options.bossKillPointsByDifficulty
+                        and DKP.db.options.bossKillPointsByDifficulty[difficultyID]
+                    local basePoints
+                    if diffPoints ~= nil then
+                        basePoints = diffPoints  -- 难度有明确配置（包括0=不加分）
+                    else
+                        basePoints = DKP.db.options.bossKillPoints or 5
+                    end
+
+                    if basePoints <= 0 then
+                        DKP.Print(encounterName .. " 击杀! (难度" .. difficultyID .. " 不加DKP)")
+                    else
+                        -- 计算额外加分
+                        local bonusPoints = 0
+                        local bonusReasons = {}
+
+                        -- 开荒首杀额外加分
+                        local progressionBonus = DKP.db.options.progressionBonusPoints or 0
+                        if progressionBonus > 0 then
+                            if not DKP.db.session.firstKills then
+                                DKP.db.session.firstKills = {}
+                            end
+                            if not DKP.db.session.firstKills[encounterID] then
+                                DKP.db.session.firstKills[encounterID] = true
+                                bonusPoints = bonusPoints + progressionBonus
+                                table.insert(bonusReasons, "首杀+" .. progressionBonus)
+                            end
+                        end
+
+                        -- 团灭加分（每次团灭额外加分，击杀时结算）
+                        local wipeBonus = DKP.db.options.wipeBonus or 0
+                        if wipeBonus > 0 then
+                            local wipeCounts = DKP.db.session.wipeCounts or {}
+                            local wipes = wipeCounts[encounterID] or 0
+                            if wipes > 0 then
+                                local maxWipes = DKP.db.options.wipeBonusMax or 10
+                                local effectiveWipes = math.min(wipes, maxWipes)
+                                local wipeTotal = effectiveWipes * wipeBonus
+                                bonusPoints = bonusPoints + wipeTotal
+                                table.insert(bonusReasons, wipes .. "次团灭+" .. wipeTotal)
+                            end
+                        end
+
+                        local totalPoints = basePoints + bonusPoints
+                        DKP.db.session.bossKills[encounterID] = true
+
+                        -- 加分
+                        local reason = "Boss击杀: " .. encounterName
+                        if #bonusReasons > 0 then
+                            reason = reason .. " (" .. table.concat(bonusReasons, ", ") .. ")"
+                        end
+
+                        local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
+                        local cnt = 0
+                        for _, m in ipairs(members) do
+                            if m.playerName and m.online then
+                                DKP.AdjustDKP(m.playerName, totalPoints, reason)
+                                cnt = cnt + 1
+                            end
+                        end
+                        if cnt > 0 then
+                            local msg = encounterName .. " 击杀! " .. cnt .. " 名玩家 +" .. totalPoints .. " DKP"
+                            if bonusPoints > 0 then
+                                msg = msg .. " (基础" .. basePoints .. " + 额外" .. bonusPoints .. ")"
+                            end
+                            DKP.Print(msg)
+                            local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+                            if channel then
+                                SendChatMessage("[YTHT-DKP] " .. msg, channel)
+                            end
+                        end
+                    end
+                end
+            end
         else
-            DKP.Print("Boss " .. encounterName .. " 团灭")
+            -- 团灭 → 记录团灭次数
+            if DKP.db.session.active then
+                if not DKP.db.session.wipeCounts then
+                    DKP.db.session.wipeCounts = {}
+                end
+                DKP.db.session.wipeCounts[encounterID] = (DKP.db.session.wipeCounts[encounterID] or 0) + 1
+                local wipes = DKP.db.session.wipeCounts[encounterID]
+                DKP.Print("Boss " .. encounterName .. " 团灭 (第" .. wipes .. "次)")
+            else
+                DKP.Print("Boss " .. encounterName .. " 团灭")
+            end
         end
 
         -- 重置当前战斗

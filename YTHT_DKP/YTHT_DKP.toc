@@ -7,6 +7,13 @@
 
 Core/DB.lua
 Core/Util.lua
+Core/Permission.lua
+Core/Comm.lua
 Core/Main.lua
 Modules/DKPManager.lua
 Modules/LootDetector.lua
+Modules/AuctionCore.lua
+Modules/AuctionUI.lua
+Modules/AuctionStart.lua
+Modules/AuctionLog.lua
+Modules/WhisperQuery.lua

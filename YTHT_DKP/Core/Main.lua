@@ -115,7 +115,8 @@ local function CreateMainFrame()
 
     local tabLoot = CreateTabButton(f, "拍卖表", PADDING, "loot")
     local tabDKP = CreateTabButton(f, "DKP管理", PADDING + 76, "dkp")
-    f.tabs = { loot = tabLoot, dkp = tabDKP }
+    local tabAuctionLog = CreateTabButton(f, "拍卖记录", PADDING + 76 * 2, "auctionlog")
+    f.tabs = { loot = tabLoot, dkp = tabDKP, auctionlog = tabAuctionLog }
     f.activeTab = "loot"
 
     local contentY = tabY - TAB_HEIGHT - 4
@@ -168,6 +169,13 @@ local function CreateMainFrame()
     dkpContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
     dkpContent:Hide()
     f.dkpContent = dkpContent
+
+    -- ========== 拍卖记录内容（由AuctionLog填充） ==========
+    local auctionLogContent = CreateFrame("Frame", nil, f)
+    auctionLogContent:SetPoint("TOPLEFT", f, "TOPLEFT", 0, contentY)
+    auctionLogContent:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+    auctionLogContent:Hide()
+    f.auctionLogContent = auctionLogContent
 
     f:Hide()
     return f
@@ -264,6 +272,14 @@ local function CreateItemRow(parent, itemIndex, yOffset)
     dkpText:SetWordWrap(false)
     dkpText:SetText("")
 
+    -- 拍卖按钮（管理员可见）
+    local auctionBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    auctionBtn:SetSize(46, 18)
+    auctionBtn:SetPoint("LEFT", row, "LEFT", ITEM_ICON_SIZE + ITEM_LINK_WIDTH + WINNER_WIDTH + DKP_WIDTH + 16, 0)
+    auctionBtn:SetText("拍卖")
+    auctionBtn:Hide()
+    row.auctionBtn = auctionBtn
+
     -- Tooltip
     row:SetScript("OnEnter", function(self)
         if self.itemLink then
@@ -336,6 +352,20 @@ local function SetItemRowData(row, itemData)
         row.dkpText:SetText("|cffFFD700" .. itemData.dkp .. "|r")
     else
         row.dkpText:SetText("")
+    end
+
+    -- 拍卖按钮
+    if row.auctionBtn then
+        if DKP.IsOfficer and DKP.IsOfficer() and (not itemData.winner or itemData.winner == "") then
+            row.auctionBtn:Show()
+            row.auctionBtn:SetScript("OnClick", function()
+                if DKP.ShowAuctionStartDialog then
+                    DKP.ShowAuctionStartDialog(itemData.link, itemData)
+                end
+            end)
+        else
+            row.auctionBtn:Hide()
+        end
     end
 
     row:Show()
@@ -539,7 +569,29 @@ end
 function DKP.ToggleMainFrame()
     if not DKP.MainFrame then return end
     if DKP.MainFrame:IsShown() then
-        DKP.MainFrame:Hide()
+        if DKP.hasUnsavedChanges then
+            StaticPopupDialogs["YTHT_DKP_RELOAD_PROMPT"] = {
+                text = "DKP数据已修改，是否重载UI以保存？\n（不重载则关闭游戏时自动保存，但崩溃会丢失）",
+                button1 = "重载保存",
+                button2 = "稍后关闭",
+                button3 = "不保存关闭",
+                OnAccept = function() ReloadUI() end,
+                OnCancel = function()
+                    -- button2: 稍后关闭 - 什么都不做
+                end,
+                OnAlt = function()
+                    -- button3: 不保存关闭
+                    DKP.MainFrame:Hide()
+                end,
+                timeout = 0,
+                whileDead = true,
+                hideOnEscape = true,
+            }
+            local popup = StaticPopup_Show("YTHT_DKP_RELOAD_PROMPT")
+            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+        else
+            DKP.MainFrame:Hide()
+        end
     else
         DKP.MainFrame:Show()
         if DKP.MainFrame.activeTab == "loot" then
@@ -568,11 +620,18 @@ function DKP.SwitchTab(tabKey)
     if tabKey == "loot" then
         f.lootContent:Show()
         f.dkpContent:Hide()
+        if f.auctionLogContent then f.auctionLogContent:Hide() end
         DKP.RefreshTableUI()
     elseif tabKey == "dkp" then
         f.lootContent:Hide()
         f.dkpContent:Show()
+        if f.auctionLogContent then f.auctionLogContent:Hide() end
         if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+    elseif tabKey == "auctionlog" then
+        f.lootContent:Hide()
+        f.dkpContent:Hide()
+        if f.auctionLogContent then f.auctionLogContent:Show() end
+        if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
     end
     f.activeTab = tabKey
 end
@@ -596,6 +655,11 @@ function DKP.OnInitialized()
     -- 初始化DKP管理面板
     if DKP.InitDKPPanel then
         DKP.InitDKPPanel()
+    end
+
+    -- 初始化拍卖记录面板
+    if DKP.InitAuctionLogPanel then
+        DKP.InitAuctionLogPanel()
     end
 
     -- 设置当前副本表格
@@ -633,12 +697,258 @@ function DKP.OnInitialized()
         elseif cmd == "dkp" then
             DKP.MainFrame:Show()
             DKP.SwitchTab("dkp")
+        elseif cmd == "gather" then
+            if not DKP.IsOfficer() then
+                DKP.Print("只有团长或助理可以执行集合加分")
+                return
+            end
+            if DKP.db.session.gathered then
+                DKP.Print("本次活动已经执行过集合加分")
+                return
+            end
+            DKP.db.session.active = true
+            DKP.db.session.gathered = true
+            local points = DKP.db.options.gatherPoints or 10
+            local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
+            local count = 0
+            for _, m in ipairs(members) do
+                if m.playerName and m.online then
+                    DKP.AdjustDKP(m.playerName, points, "集合")
+                    count = count + 1
+                end
+            end
+            DKP.Print("集合加分: " .. count .. " 名玩家 +" .. points .. " DKP")
+            local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+            if channel then
+                SendChatMessage("[YTHT-DKP] 集合加分! 全团 +" .. points .. " DKP", channel)
+            end
+            if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+
+        elseif cmd == "dismiss" then
+            if not DKP.IsOfficer() then
+                DKP.Print("只有团长或助理可以执行解散加分")
+                return
+            end
+            local points = DKP.db.options.dismissPoints or 10
+            local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
+            local count = 0
+            for _, m in ipairs(members) do
+                if m.playerName and m.online then
+                    DKP.AdjustDKP(m.playerName, points, "解散")
+                    count = count + 1
+                end
+            end
+            DKP.Print("解散加分: " .. count .. " 名玩家 +" .. points .. " DKP")
+            DKP.db.session.active = false
+            DKP.db.session.gathered = false
+            wipe(DKP.db.session.bossKills)
+            if DKP.db.session.wipeCounts then wipe(DKP.db.session.wipeCounts) end
+            local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+            if channel then
+                SendChatMessage("[YTHT-DKP] 解散加分! 全团 +" .. points .. " DKP", channel)
+            end
+            if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+
+        elseif cmd == "session" then
+            if arg1 == "start" then
+                DKP.db.session.active = true
+                DKP.Print("活动开始")
+            elseif arg1 == "end" or arg1 == "stop" then
+                DKP.db.session.active = false
+                DKP.db.session.gathered = false
+                wipe(DKP.db.session.bossKills)
+                if DKP.db.session.wipeCounts then wipe(DKP.db.session.wipeCounts) end
+                DKP.Print("活动结束，session已重置")
+            else
+                DKP.Print("活动状态: " .. (DKP.db.session.active and "|cff00FF00进行中|r" or "|cffFF4444未开始|r"))
+            end
+
+        elseif cmd == "auction" then
+            DKP.MainFrame:Show()
+            DKP.SwitchTab("auctionlog")
+
+        elseif cmd == "export" then
+            if DKP.ShowExportDialog then
+                DKP.ShowExportDialog()
+            end
+
+        elseif cmd == "bossbonus" then
+            local opts = DKP.db.options
+            if arg1 == "on" then
+                opts.enableBossKillBonus = true
+                DKP.Print("Boss击杀自动加分: |cff00FF00已启用|r")
+            elseif arg1 == "off" then
+                opts.enableBossKillBonus = false
+                DKP.Print("Boss击杀自动加分: |cffFF4444已禁用|r")
+            elseif arg1 == "points" then
+                local val = tonumber(arg2)
+                if val then
+                    opts.bossKillPoints = val
+                    DKP.Print("Boss击杀默认加分设为: " .. val)
+                else
+                    DKP.Print("当前Boss击杀默认加分: " .. (opts.bossKillPoints or 5))
+                end
+            elseif arg1 == "diff" then
+                -- /ytht bossbonus diff 16 10  → 史诗难度加10分
+                -- /ytht bossbonus diff 14 0   → 普通难度不加分
+                local diffIDStr, diffPtsStr = strsplit(" ", arg2 or "", 2)
+                local diffID = tonumber(diffIDStr)
+                local diffPts = tonumber(diffPtsStr)
+                if diffID and diffPts then
+                    if not opts.bossKillPointsByDifficulty then
+                        opts.bossKillPointsByDifficulty = {}
+                    end
+                    opts.bossKillPointsByDifficulty[diffID] = diffPts
+                    local label = (diffPts == 0) and "|cffFF4444不加分|r" or (diffPts .. " DKP")
+                    DKP.Print("难度ID " .. diffID .. " 击杀加分设为: " .. label)
+                else
+                    DKP.Print("用法: /ytht bossbonus diff <难度ID> <分值>")
+                    DKP.Print("  难度ID: 14=普通 15=英雄 16=史诗 17=随机团")
+                    DKP.Print("  分值为0表示该难度不加分")
+                    if opts.bossKillPointsByDifficulty then
+                        for did, dpts in pairs(opts.bossKillPointsByDifficulty) do
+                            DKP.Print("  当前: 难度" .. did .. " = " .. dpts .. " DKP")
+                        end
+                    end
+                end
+            elseif arg1 == "progression" then
+                local val = tonumber(arg2)
+                if val then
+                    opts.progressionBonusPoints = val
+                    DKP.Print("开荒首杀额外加分设为: " .. val)
+                else
+                    DKP.Print("当前开荒首杀额外加分: " .. (opts.progressionBonusPoints or 0))
+                end
+            elseif arg1 == "wipe" then
+                local val = tonumber(arg2)
+                if val then
+                    opts.wipeBonus = val
+                    DKP.Print("每次团灭额外加分设为: " .. val)
+                else
+                    DKP.Print("当前每次团灭额外加分: " .. (opts.wipeBonus or 0))
+                    DKP.Print("团灭加分上限次数: " .. (opts.wipeBonusMax or 10))
+                end
+            elseif arg1 == "wipemax" then
+                local val = tonumber(arg2)
+                if val then
+                    opts.wipeBonusMax = val
+                    DKP.Print("团灭加分上限次数设为: " .. val)
+                else
+                    DKP.Print("当前团灭加分上限次数: " .. (opts.wipeBonusMax or 10))
+                end
+            elseif arg1 == "firstkill" and arg2 == "reset" then
+                if DKP.db.session.firstKills then
+                    wipe(DKP.db.session.firstKills)
+                end
+                DKP.Print("首杀记录已重置")
+            else
+                local status = opts.enableBossKillBonus and "|cff00FF00启用|r" or "|cffFF4444禁用|r"
+                DKP.Print("===== Boss击杀加分配置 =====")
+                DKP.Print("状态: " .. status)
+                DKP.Print("默认加分: " .. (opts.bossKillPoints or 5) .. " DKP")
+                DKP.Print("首杀额外: " .. (opts.progressionBonusPoints or 0) .. " DKP")
+                DKP.Print("团灭加分: " .. (opts.wipeBonus or 0) .. " DKP/次 (上限" .. (opts.wipeBonusMax or 10) .. "次)")
+                if opts.bossKillPointsByDifficulty and next(opts.bossKillPointsByDifficulty) then
+                    DKP.Print("难度配置:")
+                    local diffNames = {[1]="普通(旧)", [2]="英雄(旧)", [14]="普通", [15]="英雄", [16]="史诗", [17]="随机团"}
+                    for did, dpts in pairs(opts.bossKillPointsByDifficulty) do
+                        local dname = diffNames[did] or ("ID" .. did)
+                        local label = (dpts == 0) and "不加分" or (dpts .. " DKP")
+                        DKP.Print("  " .. dname .. "(" .. did .. "): " .. label)
+                    end
+                end
+                DKP.Print("命令:")
+                DKP.Print("  /ytht bossbonus on|off")
+                DKP.Print("  /ytht bossbonus points <分值>")
+                DKP.Print("  /ytht bossbonus diff <难度ID> <分值>")
+                DKP.Print("  /ytht bossbonus progression <分值>")
+                DKP.Print("  /ytht bossbonus wipe <每次分值>")
+                DKP.Print("  /ytht bossbonus wipemax <次数>")
+                DKP.Print("  /ytht bossbonus firstkill reset")
+            end
+
+        elseif cmd == "debug" then
+            if arg1 == "additem" then
+                -- 扫描背包添加装备到拍卖表
+                local instanceName = DKP.db.currentSheet or "测试副本"
+                if not DKP.db.sheets[instanceName] then
+                    DKP.GetOrCreateSheet(instanceName)
+                end
+                local bossName = "测试Boss"
+                local encounterID = -1
+                DKP.AddBossToSheet(instanceName, bossName, encounterID)
+                local added = 0
+                for bag = 0, 4 do
+                    local numSlots = C_Container.GetContainerNumSlots(bag)
+                    for slot = 1, numSlots do
+                        local info = C_Container.GetContainerItemInfo(bag, slot)
+                        if info and info.quality and info.quality >= 3 then
+                            local itemLink = C_Container.GetContainerItemLink(bag, slot)
+                            if itemLink then
+                                local rollID = -(time() * 100 + added)
+                                DKP.AddItemToBoss(instanceName, encounterID, itemLink, rollID)
+                                added = added + 1
+                            end
+                        end
+                    end
+                end
+                DKP.Print("已添加 " .. added .. " 件背包装备到拍卖表")
+                DKP.MainFrame:Show()
+                DKP.SwitchTab("loot")
+                DKP.RefreshTableUI()
+
+            elseif arg1 == "auction" then
+                -- 直接发起测试拍卖
+                if arg2 and arg2 ~= "" then
+                    DKP.StartAuction(arg2, DKP.db.options.defaultStartingBid, DKP.db.options.auctionDuration)
+                else
+                    DKP.Print("用法: /ytht debug auction [物品链接]")
+                end
+
+            elseif arg1 == "fakeraid" then
+                -- 确保自己在DKP名单中
+                local myName = DKP.playerName
+                local myClass = DKP.playerClass or "WARRIOR"
+                if not DKP.GetPlayerByCharacter(myName) then
+                    DKP.AddPlayer(myName)
+                    DKP.AddCharacter(myName, myName, myClass)
+                    DKP.SetDKP(myName, 100, "调试初始化")
+                    DKP.Print("已添加自己到DKP名单 (100 DKP)")
+                else
+                    DKP.Print("你已在DKP名单中")
+                end
+                if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+
+            elseif arg1 == "reset" then
+                wipe(DKP.activeAuctions)
+                DKP.db.session.active = false
+                DKP.db.session.gathered = false
+                wipe(DKP.db.session.bossKills)
+                if DKP.db.session.wipeCounts then wipe(DKP.db.session.wipeCounts) end
+                DKP.Print("已重置所有拍卖和session状态")
+                if DKP.RefreshAuctionUI then DKP.RefreshAuctionUI() end
+
+            else
+                DKP.Print("调试命令:")
+                DKP.Print("  /ytht debug additem    - 背包装备添加到拍卖表")
+                DKP.Print("  /ytht debug auction [链接] - 直接发起测试拍卖")
+                DKP.Print("  /ytht debug fakeraid   - 添加自己到DKP名单")
+                DKP.Print("  /ytht debug reset      - 重置拍卖/session状态")
+            end
+
         elseif cmd == "help" then
             DKP.Print("===== YTHT DKP 命令 =====")
             DKP.Print("/ytht            - 显示/隐藏主界面")
             DKP.Print("/ytht dkp        - 打开DKP管理界面")
+            DKP.Print("/ytht auction    - 打开拍卖记录")
+            DKP.Print("/ytht gather     - 集合加分")
+            DKP.Print("/ytht dismiss    - 解散加分")
+            DKP.Print("/ytht session    - 查看/开始/结束活动")
+            DKP.Print("/ytht export     - 导出DKP数据")
+            DKP.Print("/ytht bossbonus  - Boss击杀加分配置")
             DKP.Print("/ytht status     - 显示当前状态")
             DKP.Print("/ytht reset <名> - 重置指定副本数据")
+            DKP.Print("/ytht debug      - 调试命令")
             DKP.Print("/ytht help       - 显示此帮助")
             DKP.Print("=========================")
         else

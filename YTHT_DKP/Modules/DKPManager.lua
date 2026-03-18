@@ -131,6 +131,7 @@ function DKP.AdjustDKP(playerName, amount, reason)
     if not player then return false end
     player.dkp = (player.dkp or 0) + amount
     player.lastUpdated = time()
+    DKP.hasUnsavedChanges = true
     table.insert(DKP.db.log, {
         type = amount >= 0 and "award" or "deduct",
         player = playerName,
@@ -139,6 +140,10 @@ function DKP.AdjustDKP(playerName, amount, reason)
         timestamp = time(),
         officer = DKP.playerName or "Unknown",
     })
+    -- 广播DKP变动
+    if DKP.BroadcastDKPChange then
+        DKP.BroadcastDKPChange(playerName, player.dkp, amount, reason or "")
+    end
     return true
 end
 
@@ -148,14 +153,20 @@ function DKP.SetDKP(playerName, amount, reason)
     local old = player.dkp or 0
     player.dkp = amount
     player.lastUpdated = time()
+    DKP.hasUnsavedChanges = true
+    local logReason = reason or ("从 " .. old .. " 设置为 " .. amount)
     table.insert(DKP.db.log, {
         type = "set",
         player = playerName,
         amount = amount,
-        reason = reason or ("从 " .. old .. " 设置为 " .. amount),
+        reason = logReason,
         timestamp = time(),
         officer = DKP.playerName or "Unknown",
     })
+    -- 广播DKP变动
+    if DKP.BroadcastDKPChange then
+        DKP.BroadcastDKPChange(playerName, amount, amount - old, logReason)
+    end
     return true
 end
 
@@ -573,7 +584,8 @@ local function ShowEditPlayerDialog(playerName)
                 whileDead = true,
                 hideOnEscape = true,
             }
-            StaticPopup_Show("YTHT_DKP_RENAME_PLAYER")
+            local popup = StaticPopup_Show("YTHT_DKP_RENAME_PLAYER")
+            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
         end)
 
         -- === 角色列表 ===
@@ -800,7 +812,8 @@ local function ShowEditPlayerDialog(playerName)
                     whileDead = true,
                     hideOnEscape = true,
                 }
-                StaticPopup_Show("YTHT_DKP_RENAME_CHAR")
+                local popup = StaticPopup_Show("YTHT_DKP_RENAME_CHAR")
+                if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
             end)
 
             row.delBtn:SetScript("OnClick", function()
@@ -837,32 +850,206 @@ local function ShowEditPlayerDialog(playerName)
 end
 
 ----------------------------------------------------------------------
--- 对话框：导入CSV
+-- 对话框：导入（多模式：DKP数据 / 操作记录 / 人员名单）
 ----------------------------------------------------------------------
 local importDialog
 
+local IMPORT_MODES = {
+    {
+        key = "dkp",
+        label = "DKP数据",
+        hint = "格式: 玩家名,DKP[,角色名:职业,...]  每行一条\n"
+            .. "例: 张三,150,猎人角色:HUNTER,战士角色:WARRIOR\n"
+            .. "例: 李四,200\n"
+            .. "已有玩家会更新DKP，新玩家会自动创建。",
+    },
+    {
+        key = "log",
+        label = "操作记录",
+        hint = "格式: 时间戳,类型,玩家,数额,原因,操作员\n"
+            .. "例: 1710000000,award,张三,10,Boss击杀,团长\n"
+            .. "按时间戳去重，不会重复导入。用于崩溃恢复。",
+    },
+    {
+        key = "roster",
+        label = "人员名单",
+        hint = "格式: 玩家名[,角色名:职业,...]\n"
+            .. "例: 张三,猎人角色:HUNTER,战士角色:WARRIOR\n"
+            .. "仅同步玩家名单和角色映射，不修改DKP。",
+    },
+}
+
+local function ImportDKPData(text)
+    if not DKP.db then return 0, 0 end
+    local newCount, updateCount = 0, 0
+    for line in text:gmatch("[^\r\n]+") do
+        line = line:match("^%s*(.-)%s*$")
+        if line ~= "" and not line:match("^#") then
+            local parts = {}
+            for part in line:gmatch("[^,]+") do
+                table.insert(parts, part:match("^%s*(.-)%s*$"))
+            end
+            if #parts >= 2 then
+                local name = parts[1]
+                local dkp = tonumber(parts[2])
+                if name and dkp then
+                    local isNew = not DKP.db.players[name]
+                    if isNew then
+                        DKP.AddPlayer(name)
+                        newCount = newCount + 1
+                    else
+                        updateCount = updateCount + 1
+                    end
+                    DKP.SetDKP(name, dkp, "导入")
+                    -- 解析角色列表 (格式: 角色名:职业)
+                    for i = 3, #parts do
+                        local charName, charClass = parts[i]:match("^(.+):(%u+)$")
+                        if charName then
+                            if not CLASS_NAMES[charClass] then charClass = "WARRIOR" end
+                            DKP.AddCharacter(name, charName, charClass)
+                        elseif parts[i] ~= "" then
+                            -- 兼容旧格式: 角色名,职业 (两个逗号分隔)
+                            local nextPart = parts[i + 1]
+                            if nextPart and CLASS_NAMES[nextPart:upper()] then
+                                DKP.AddCharacter(name, parts[i], nextPart:upper())
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    RebuildCharLookup()
+    DKP.Print("DKP导入完成: 新增 " .. newCount .. " 人, 更新 " .. updateCount .. " 人")
+    return newCount + updateCount
+end
+
+local function ImportLogData(text)
+    if not DKP.db then return 0 end
+    -- 收集已有时间戳用于去重
+    local existingTS = {}
+    for _, entry in ipairs(DKP.db.log) do
+        local key = (entry.timestamp or 0) .. ":" .. (entry.player or "") .. ":" .. (entry.amount or 0)
+        existingTS[key] = true
+    end
+
+    local count = 0
+    for line in text:gmatch("[^\r\n]+") do
+        line = line:match("^%s*(.-)%s*$")
+        if line ~= "" and not line:match("^#") then
+            local parts = {}
+            for part in line:gmatch("[^,]+") do
+                table.insert(parts, part:match("^%s*(.-)%s*$"))
+            end
+            if #parts >= 4 then
+                local ts = tonumber(parts[1])
+                local logType = parts[2]
+                local player = parts[3]
+                local amount = tonumber(parts[4])
+                local reason = parts[5] or ""
+                local officer = parts[6] or ""
+
+                if ts and player and amount then
+                    local key = ts .. ":" .. player .. ":" .. amount
+                    if not existingTS[key] then
+                        table.insert(DKP.db.log, {
+                            type = logType or "award",
+                            player = player,
+                            amount = amount,
+                            reason = reason,
+                            timestamp = ts,
+                            officer = officer,
+                        })
+                        existingTS[key] = true
+                        count = count + 1
+                    end
+                end
+            end
+        end
+    end
+    -- 按时间戳排序
+    table.sort(DKP.db.log, function(a, b) return (a.timestamp or 0) < (b.timestamp or 0) end)
+    DKP.Print("操作记录导入完成: " .. count .. " 条新记录 (跳过重复)")
+    return count
+end
+
+local function ImportRoster(text)
+    if not DKP.db then return 0 end
+    local count = 0
+    for line in text:gmatch("[^\r\n]+") do
+        line = line:match("^%s*(.-)%s*$")
+        if line ~= "" and not line:match("^#") then
+            local parts = {}
+            for part in line:gmatch("[^,]+") do
+                table.insert(parts, part:match("^%s*(.-)%s*$"))
+            end
+            if #parts >= 1 then
+                local name = parts[1]
+                if name and name ~= "" then
+                    if not DKP.db.players[name] then
+                        DKP.AddPlayer(name)
+                    end
+                    for i = 2, #parts do
+                        local charName, charClass = parts[i]:match("^(.+):(%u+)$")
+                        if charName then
+                            if not CLASS_NAMES[charClass] then charClass = "WARRIOR" end
+                            DKP.AddCharacter(name, charName, charClass)
+                        end
+                    end
+                    count = count + 1
+                end
+            end
+        end
+    end
+    RebuildCharLookup()
+    DKP.Print("人员名单导入完成: " .. count .. " 名玩家")
+    return count
+end
+
 local function ShowImportDialog()
     if not importDialog then
-        local d = CreateDialogFrame("YTHTDKPImportDialog", 460, 360, "导入DKP数据")
+        local d = CreateDialogFrame("YTHTDKPImportDialog", 500, 400, "导入数据")
+
+        -- 模式 Tab 按钮
+        d.modeTabs = {}
+        d.currentMode = "dkp"
+
+        for idx, mode in ipairs(IMPORT_MODES) do
+            local tab = CreateFrame("Button", nil, d)
+            tab:SetSize(100, 22)
+            tab:SetPoint("TOPLEFT", 16 + (idx - 1) * 104, -32)
+            tab:SetNormalFontObject("GameFontNormalSmall")
+            tab:SetHighlightFontObject("GameFontHighlightSmall")
+
+            local bg = tab:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            tab.bg = bg
+            tab.modeKey = mode.key
+
+            local text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            text:SetPoint("CENTER")
+            text:SetText(mode.label)
+            tab.text = text
+
+            d.modeTabs[idx] = tab
+        end
 
         local hint = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        hint:SetPoint("TOPLEFT", 16, -38)
-        hint:SetWidth(428)
-        hint:SetText("格式: 玩家名,DKP[,角色名,职业]  每行一条\n"
-            .. "例: 张三,150,猎人角色,HUNTER\n"
-            .. "例: 李四,200")
+        hint:SetPoint("TOPLEFT", 16, -58)
+        hint:SetWidth(468)
         hint:SetTextColor(0.6, 0.6, 0.6)
         hint:SetJustifyH("LEFT")
+        d.hint = hint
 
         local sf = CreateFrame("ScrollFrame", "YTHTDKPImportScroll", d, "UIPanelScrollFrameTemplate")
-        sf:SetPoint("TOPLEFT", 16, -86)
+        sf:SetPoint("TOPLEFT", 16, -106)
         sf:SetPoint("BOTTOMRIGHT", -36, 50)
 
         local editBox = CreateFrame("EditBox", "YTHTDKPImportEditBox", sf)
         editBox:SetMultiLine(true)
         editBox:SetAutoFocus(false)
         editBox:SetFontObject("ChatFontNormal")
-        editBox:SetWidth(400)
+        editBox:SetWidth(440)
         editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
         sf:SetScrollChild(editBox)
         d.editBox = editBox
@@ -871,24 +1058,61 @@ local function ShowImportDialog()
             editBox:SetWidth(sf:GetWidth())
         end)
 
+        -- 切换模式
+        local function SwitchMode(modeKey)
+            d.currentMode = modeKey
+            for _, tab in ipairs(d.modeTabs) do
+                if tab.modeKey == modeKey then
+                    tab.bg:SetColorTexture(0.2, 0.4, 0.6, 0.8)
+                    tab.text:SetTextColor(1, 1, 1)
+                else
+                    tab.bg:SetColorTexture(0.15, 0.15, 0.2, 0.6)
+                    tab.text:SetTextColor(0.6, 0.6, 0.6)
+                end
+            end
+            for _, mode in ipairs(IMPORT_MODES) do
+                if mode.key == modeKey then
+                    d.hint:SetText(mode.hint)
+                    break
+                end
+            end
+        end
+
+        for _, tab in ipairs(d.modeTabs) do
+            tab:SetScript("OnClick", function(self)
+                SwitchMode(self.modeKey)
+            end)
+        end
+
+        SwitchMode("dkp")
+
         local importBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
         importBtn:SetSize(80, 24)
-        importBtn:SetPoint("BOTTOMLEFT", 80, 14)
+        importBtn:SetPoint("BOTTOMLEFT", 100, 14)
         importBtn:SetText("导入")
         importBtn:SetScript("OnClick", function()
             local text = d.editBox:GetText()
-            if text and text ~= "" then
-                local count = DKP.ImportCSV(text)
-                DKP.RefreshDKPUI()
-                if count > 0 then
-                    d:Hide()
-                end
+            if not text or text == "" then
+                DKP.Print("请输入导入内容")
+                return
+            end
+            local count = 0
+            if d.currentMode == "dkp" then
+                count = ImportDKPData(text)
+            elseif d.currentMode == "log" then
+                count = ImportLogData(text)
+            elseif d.currentMode == "roster" then
+                count = ImportRoster(text)
+            end
+            DKP.RefreshDKPUI()
+            if count > 0 then
+                d:Hide()
             end
         end)
 
         local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
         cancelBtn:SetSize(80, 24)
-        cancelBtn:SetPoint("BOTTOMRIGHT", -80, 14)
+        cancelBtn:SetPoint("BOTTOMRIGHT", -100, 14)
         cancelBtn:SetText("取消")
         cancelBtn:SetScript("OnClick", function() d:Hide() end)
 
@@ -971,9 +1195,163 @@ local function ShowBulkAdjustDialog()
 end
 
 ----------------------------------------------------------------------
+-- 对话框：导出DKP数据
+----------------------------------------------------------------------
+local exportDialog
+
+function DKP.ShowExportDialog()
+    if not exportDialog then
+        local d = CreateDialogFrame("YTHTDKPExportDialog", 520, 420, "导出DKP数据")
+
+        local closeBtn = CreateFrame("Button", nil, d, "UIPanelCloseButton")
+        closeBtn:SetPoint("TOPRIGHT", -2, -2)
+
+        -- 模式切换按钮
+        local modeDKP = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        modeDKP:SetSize(100, 22)
+        modeDKP:SetPoint("TOPLEFT", 16, -36)
+        modeDKP:SetText("DKP数据")
+        d.modeDKP = modeDKP
+
+        local modeLog = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        modeLog:SetSize(100, 22)
+        modeLog:SetPoint("LEFT", modeDKP, "RIGHT", 4, 0)
+        modeLog:SetText("操作记录")
+        d.modeLog = modeLog
+
+        local modeRoster = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        modeRoster:SetSize(100, 22)
+        modeRoster:SetPoint("LEFT", modeLog, "RIGHT", 4, 0)
+        modeRoster:SetText("人员名单")
+        d.modeRoster = modeRoster
+
+        -- 提示
+        local hint = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        hint:SetPoint("TOPLEFT", 16, -64)
+        hint:SetWidth(488)
+        hint:SetJustifyH("LEFT")
+        hint:SetTextColor(0.6, 0.6, 0.6)
+        d.hint = hint
+
+        -- 文本区域
+        local sf = CreateFrame("ScrollFrame", "YTHTDKPExportScroll", d, "UIPanelScrollFrameTemplate")
+        sf:SetPoint("TOPLEFT", 16, -82)
+        sf:SetPoint("BOTTOMRIGHT", -36, 50)
+
+        local editBox = CreateFrame("EditBox", "YTHTDKPExportEditBox", sf)
+        editBox:SetMultiLine(true)
+        editBox:SetAutoFocus(false)
+        editBox:SetFontObject("ChatFontNormal")
+        editBox:SetWidth(460)
+        editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        sf:SetScrollChild(editBox)
+        d.editBox = editBox
+
+        d:SetScript("OnShow", function()
+            editBox:SetWidth(sf:GetWidth())
+        end)
+
+        -- 底部按钮
+        local selectAllBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        selectAllBtn:SetSize(80, 24)
+        selectAllBtn:SetPoint("BOTTOMLEFT", 16, 14)
+        selectAllBtn:SetText("全选复制")
+        selectAllBtn:SetScript("OnClick", function()
+            d.editBox:HighlightText()
+            d.editBox:SetFocus()
+        end)
+
+        local closeFooterBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        closeFooterBtn:SetSize(80, 24)
+        closeFooterBtn:SetPoint("BOTTOMRIGHT", -16, 14)
+        closeFooterBtn:SetText("关闭")
+        closeFooterBtn:SetScript("OnClick", function() d:Hide() end)
+
+        -- 导出函数
+        local function ExportDKPData()
+            local lines = {}
+            table.insert(lines, "# DKP数据导出 - " .. date("%Y-%m-%d %H:%M:%S"))
+            table.insert(lines, "# 格式: 玩家名,DKP,角色1:职业1,角色2:职业2,...")
+            if DKP.db and DKP.db.players then
+                for name, data in pairs(DKP.db.players) do
+                    local charParts = {}
+                    for _, char in ipairs(data.characters or {}) do
+                        table.insert(charParts, char.name .. ":" .. (char.class or "WARRIOR"))
+                    end
+                    table.insert(lines, name .. "," .. tostring(data.dkp or 0) .. "," .. table.concat(charParts, ","))
+                end
+            end
+            return table.concat(lines, "\n")
+        end
+
+        local function ExportLog()
+            local lines = {}
+            table.insert(lines, "# 操作记录导出 - " .. date("%Y-%m-%d %H:%M:%S"))
+            table.insert(lines, "# 格式: 时间戳,类型,玩家,数额,原因,操作员")
+            for _, entry in ipairs(DKP.db.log or {}) do
+                table.insert(lines, table.concat({
+                    tostring(entry.timestamp or 0),
+                    entry.type or "",
+                    entry.player or "",
+                    tostring(entry.amount or 0),
+                    (entry.reason or ""):gsub(",", ";"),  -- 逗号转义
+                    entry.officer or "",
+                }, ","))
+            end
+            return table.concat(lines, "\n")
+        end
+
+        local function ExportRoster()
+            local lines = {}
+            table.insert(lines, "# 人员名单导出 - " .. date("%Y-%m-%d %H:%M:%S"))
+            table.insert(lines, "# 格式: 玩家名,角色1:职业1,角色2:职业2,...")
+            if DKP.db and DKP.db.players then
+                for name, data in pairs(DKP.db.players) do
+                    local charParts = {}
+                    for _, char in ipairs(data.characters or {}) do
+                        table.insert(charParts, char.name .. ":" .. (char.class or "WARRIOR"))
+                    end
+                    table.insert(lines, name .. "," .. table.concat(charParts, ","))
+                end
+            end
+            return table.concat(lines, "\n")
+        end
+
+        -- 按钮回调
+        modeDKP:SetScript("OnClick", function()
+            d.hint:SetText("DKP数据格式: 玩家名,DKP,角色1:职业1,角色2:职业2,...")
+            d.editBox:SetText(ExportDKPData())
+            d.editBox:HighlightText()
+            d.editBox:SetFocus()
+        end)
+        modeLog:SetScript("OnClick", function()
+            d.hint:SetText("操作记录格式: 时间戳,类型,玩家,数额,原因,操作员")
+            d.editBox:SetText(ExportLog())
+            d.editBox:HighlightText()
+            d.editBox:SetFocus()
+        end)
+        modeRoster:SetScript("OnClick", function()
+            d.hint:SetText("人员名单格式: 玩家名,角色1:职业1,角色2:职业2,...")
+            d.editBox:SetText(ExportRoster())
+            d.editBox:HighlightText()
+            d.editBox:SetFocus()
+        end)
+
+        exportDialog = d
+    end
+
+    -- 默认显示DKP数据
+    exportDialog.hint:SetText("点击上方按钮切换导出模式，然后全选复制")
+    exportDialog.editBox:SetText("")
+    exportDialog:Show()
+    -- 自动加载DKP数据
+    exportDialog.modeDKP:GetScript("OnClick")(exportDialog.modeDKP)
+end
+
+----------------------------------------------------------------------
 -- 获取团队/小队成员
 ----------------------------------------------------------------------
-local function GetRaidMembers()
+function DKP.GetRaidMembers()
     local members = {}
     if IsInRaid() then
         for i = 1, GetNumGroupMembers() do
@@ -1051,6 +1429,153 @@ function DKP.ReverseLogEntry(logIndex)
         (entry.amount >= 0 and "+" or "") .. entry.amount ..
         " DKP (" .. (entry.reason or "") .. ")")
     return true
+end
+
+----------------------------------------------------------------------
+-- 角色映射弹出菜单（未匹配成员点击映射按钮时弹出）
+----------------------------------------------------------------------
+local charMapPopup
+
+function DKP.ShowCharMapPopup(anchorRow, charName, charClass, parentDialog)
+    if not charMapPopup then
+        local p = CreateFrame("Frame", "YTHTDKPCharMapPopup", UIParent, "BackdropTemplate")
+        p:SetSize(220, 200)
+        p:SetFrameStrata("DIALOG")
+        p:SetFrameLevel(200)
+        p:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        p:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+        p:SetBackdropBorderColor(0.4, 0.4, 0.4, 0.8)
+        p:EnableMouse(true)
+        p:Hide()
+
+        local title = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -8)
+        p.title = title
+
+        -- 搜索框
+        local searchBox = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
+        searchBox:SetSize(180, 18)
+        searchBox:SetPoint("TOP", 0, -28)
+        searchBox:SetAutoFocus(false)
+        searchBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        p.searchBox = searchBox
+
+        -- 玩家列表滚动区域
+        local sf = CreateFrame("ScrollFrame", "YTHTDKPCharMapScroll", p, "UIPanelScrollFrameTemplate")
+        sf:SetPoint("TOPLEFT", 8, -52)
+        sf:SetPoint("BOTTOMRIGHT", -28, 56)
+
+        local sc = CreateFrame("Frame", "YTHTDKPCharMapScrollChild", sf)
+        sc:SetWidth(170)
+        sc:SetHeight(1)
+        sf:SetScrollChild(sc)
+        p.scrollChild = sc
+        p.playerBtns = {}
+
+        -- 底部按钮：新建 & 忽略
+        local newBtn = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+        newBtn:SetSize(90, 22)
+        newBtn:SetPoint("BOTTOMLEFT", 10, 8)
+        newBtn:SetText("新建玩家")
+        p.newBtn = newBtn
+
+        local ignoreBtn = CreateFrame("Button", nil, p, "UIPanelButtonTemplate")
+        ignoreBtn:SetSize(90, 22)
+        ignoreBtn:SetPoint("BOTTOMRIGHT", -10, 8)
+        ignoreBtn:SetText("忽略")
+        p.ignoreBtn = ignoreBtn
+
+        -- 点击外部关闭
+        p:SetScript("OnShow", function() end)
+        p:SetScript("OnHide", function() end)
+
+        charMapPopup = p
+    end
+
+    local p = charMapPopup
+    p.title:SetText("映射: " .. charName)
+    p.searchBox:SetText("")
+
+    -- 刷新玩家列表的函数
+    local function RefreshList(filter)
+        for _, btn in ipairs(p.playerBtns) do btn:Hide() end
+        if not DKP.db or not DKP.db.players then return end
+
+        local idx = 0
+        local lowerFilter = (filter or ""):lower()
+        for playerName in pairs(DKP.db.players) do
+            if lowerFilter == "" or playerName:lower():find(lowerFilter, 1, true) then
+                idx = idx + 1
+                local btn = p.playerBtns[idx]
+                if not btn then
+                    btn = CreateFrame("Button", nil, p.scrollChild)
+                    btn:SetSize(170, 20)
+                    btn:SetHighlightTexture("Interface/QuestFrame/UI-QuestTitleHighlight", "ADD")
+                    local txt = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    txt:SetPoint("LEFT", 4, 0)
+                    txt:SetJustifyH("LEFT")
+                    btn.text = txt
+                    p.playerBtns[idx] = btn
+                end
+                btn:SetPoint("TOPLEFT", p.scrollChild, "TOPLEFT", 0, -(idx - 1) * 20)
+                btn.text:SetText("|cffFFD700" .. playerName .. "|r  (" .. (DKP.db.players[playerName].dkp or 0) .. ")")
+                btn:SetScript("OnClick", function()
+                    -- 映射到此玩家
+                    DKP.AddCharacter(playerName, charName, charClass)
+                    anchorRow.playerName = playerName
+                    anchorRow.matched = true
+                    anchorRow.playerText:SetText("|cffFFD700" .. playerName .. "|r")
+                    anchorRow.playerText:Show()
+                    anchorRow.mapBtn:Hide()
+                    anchorRow.cb:SetChecked(true)
+                    anchorRow.cb:Enable()
+                    p:Hide()
+                    DKP.Print(charName .. " 已映射到 " .. playerName)
+                end)
+                btn:Show()
+            end
+        end
+        p.scrollChild:SetHeight(math.max(1, idx * 20))
+    end
+
+    p.searchBox:SetScript("OnTextChanged", function(self)
+        RefreshList(self:GetText())
+    end)
+
+    -- 新建玩家按钮
+    p.newBtn:SetScript("OnClick", function()
+        -- 创建新玩家（使用角色名作为默认玩家名）
+        if not DKP.db.players[charName] then
+            DKP.AddPlayer(charName)
+        end
+        DKP.AddCharacter(charName, charName, charClass)
+        anchorRow.playerName = charName
+        anchorRow.matched = true
+        anchorRow.playerText:SetText("|cffFFD700" .. charName .. "|r")
+        anchorRow.playerText:Show()
+        anchorRow.mapBtn:Hide()
+        anchorRow.cb:SetChecked(true)
+        anchorRow.cb:Enable()
+        p:Hide()
+        DKP.Print("已创建新玩家 " .. charName .. " 并映射角色")
+        DKP.RefreshDKPUI()
+    end)
+
+    -- 忽略按钮
+    p.ignoreBtn:SetScript("OnClick", function()
+        p:Hide()
+    end)
+
+    -- 定位到锚点行
+    p:ClearAllPoints()
+    p:SetPoint("TOPLEFT", anchorRow, "TOPRIGHT", 4, 4)
+    p:Show()
+    RefreshList("")
 end
 
 ----------------------------------------------------------------------
@@ -1228,7 +1753,7 @@ local function ShowRaidAwardDialog()
 
         -- 刷新成员列表
         d.refreshMembers = function()
-            local members = GetRaidMembers()
+            local members = DKP.GetRaidMembers()
             local matchCount = 0
             local totalCount = #members
 
@@ -1266,6 +1791,16 @@ local function ShowRaidAwardDialog()
                     playerText:SetWordWrap(false)
                     row.playerText = playerText
 
+                    -- 未匹配时的映射按钮
+                    local mapBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+                    mapBtn:SetSize(60, 18)
+                    mapBtn:SetPoint("LEFT", arrow, "RIGHT", 4, 0)
+                    mapBtn:SetText("映射")
+                    mapBtn:SetNormalFontObject("GameFontNormalSmall")
+                    mapBtn:SetHighlightFontObject("GameFontHighlightSmall")
+                    mapBtn:Hide()
+                    row.mapBtn = mapBtn
+
                     d.memberRows[i] = row
                 end
 
@@ -1285,11 +1820,18 @@ local function ShowRaidAwardDialog()
 
                 if m.playerName then
                     row.playerText:SetText("|cffFFD700" .. m.playerName .. "|r")
+                    row.playerText:Show()
+                    row.mapBtn:Hide()
                     row.cb:SetChecked(true)
                     row.cb:Enable()
                     matchCount = matchCount + 1
                 else
-                    row.playerText:SetText("|cff555555(未匹配)|r")
+                    row.playerText:SetText("")
+                    row.playerText:Hide()
+                    row.mapBtn:Show()
+                    row.mapBtn:SetScript("OnClick", function()
+                        DKP.ShowCharMapPopup(row, m.shortName, m.class or "WARRIOR", d)
+                    end)
                     row.cb:SetChecked(false)
                     row.cb:Disable()
                 end
@@ -1335,7 +1877,7 @@ local LOG_TYPE_NAMES = {
 
 local function ShowLogDialog()
     if not logDialog then
-        local d = CreateDialogFrame("YTHTDKPLogDialog", 640, 480, "DKP操作记录")
+        local d = CreateDialogFrame("YTHTDKPLogDialog", 780, 480, "DKP操作记录")
 
         local closeBtn = CreateFrame("Button", nil, d, "UIPanelCloseButton")
         closeBtn:SetPoint("TOPRIGHT", -2, -2)
@@ -1348,8 +1890,8 @@ local function ShowLogDialog()
         hBg:SetHeight(18)
         hBg:SetColorTexture(0.08, 0.08, 0.12, 0.95)
 
-        local headers = { { "时间", 0, 80 }, { "玩家", 82, 90 }, { "类型", 174, 60 },
-            { "数额", 236, 60 }, { "原因", 298, 160 }, { "操作员", 460, 80 } }
+        local headers = { { "时间", 0, 100 }, { "玩家", 102, 100 }, { "类型", 204, 60 },
+            { "数额", 266, 70 }, { "原因", 338, 180 }, { "操作员", 520, 100 } }
         for _, h in ipairs(headers) do
             local t = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             t:SetPoint("TOPLEFT", hBg, "TOPLEFT", h[2] + 4, 0)
@@ -1363,7 +1905,7 @@ local function ShowLogDialog()
         sf:SetPoint("BOTTOMRIGHT", -32, 50)
 
         local sc = CreateFrame("Frame", "YTHTDKPLogScrollChild", sf)
-        sc:SetWidth(590)
+        sc:SetWidth(730)
         sc:SetHeight(1)
         sf:SetScrollChild(sc)
         d.scrollChild = sc
@@ -1402,7 +1944,7 @@ local function ShowLogDialog()
         local row = d.logRows[displayIndex]
         if not row then
             row = CreateFrame("Frame", nil, sc)
-            row:SetSize(590, 20)
+            row:SetSize(730, 22)
 
             local bgColor = (displayIndex % 2 == 0) and ROW_ALT_BG or ROW_BG
             local bg = row:CreateTexture(nil, "BACKGROUND")
@@ -1412,39 +1954,39 @@ local function ShowLogDialog()
 
             local timeText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             timeText:SetPoint("LEFT", 4, 0)
-            timeText:SetWidth(78)
+            timeText:SetWidth(98)
             timeText:SetJustifyH("LEFT")
             row.timeText = timeText
 
             local playerText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            playerText:SetPoint("LEFT", 86, 0)
-            playerText:SetWidth(88)
+            playerText:SetPoint("LEFT", 106, 0)
+            playerText:SetWidth(98)
             playerText:SetJustifyH("LEFT")
             playerText:SetWordWrap(false)
             row.playerText = playerText
 
             local typeText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            typeText:SetPoint("LEFT", 178, 0)
+            typeText:SetPoint("LEFT", 208, 0)
             typeText:SetWidth(58)
             typeText:SetJustifyH("LEFT")
             row.typeText = typeText
 
             local amountText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            amountText:SetPoint("LEFT", 240, 0)
-            amountText:SetWidth(58)
+            amountText:SetPoint("LEFT", 270, 0)
+            amountText:SetWidth(68)
             amountText:SetJustifyH("RIGHT")
             row.amountText = amountText
 
             local reasonText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            reasonText:SetPoint("LEFT", 302, 0)
-            reasonText:SetWidth(156)
+            reasonText:SetPoint("LEFT", 342, 0)
+            reasonText:SetWidth(176)
             reasonText:SetJustifyH("LEFT")
             reasonText:SetWordWrap(false)
             row.reasonText = reasonText
 
             local officerText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            officerText:SetPoint("LEFT", 464, 0)
-            officerText:SetWidth(60)
+            officerText:SetPoint("LEFT", 524, 0)
+            officerText:SetWidth(98)
             officerText:SetJustifyH("LEFT")
             officerText:SetWordWrap(false)
             row.officerText = officerText
@@ -1458,7 +2000,7 @@ local function ShowLogDialog()
             d.logRows[displayIndex] = row
         end
 
-        row:SetPoint("TOPLEFT", sc, "TOPLEFT", 0, -(displayIndex - 1) * 22)
+        row:SetPoint("TOPLEFT", sc, "TOPLEFT", 0, -(displayIndex - 1) * 24)
 
         -- 交替背景色
         local bgColor = (displayIndex % 2 == 0) and ROW_ALT_BG or ROW_BG
@@ -1511,14 +2053,15 @@ local function ShowLogDialog()
                     whileDead = true,
                     hideOnEscape = true,
                 }
-                StaticPopup_Show("YTHT_DKP_REVERSE_LOG")
+                local popup = StaticPopup_Show("YTHT_DKP_REVERSE_LOG")
+                if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
             end)
         end
 
         row:Show()
     end
 
-    sc:SetHeight(math.max(1, displayIndex * 22))
+    sc:SetHeight(math.max(1, displayIndex * 24))
     d.countText:SetText("共 " .. #log .. " 条记录")
     logDialog:Show()
 end
@@ -1612,30 +2155,42 @@ function DKP.InitDKPPanel()
     addBtn:SetPoint("LEFT", 0, 0)
     addBtn:SetText("添加玩家")
     addBtn:SetScript("OnClick", function() ShowAddPlayerDialog() end)
+    parent.addBtn = addBtn
 
     local importBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     importBtn:SetSize(72, 22)
     importBtn:SetPoint("LEFT", addBtn, "RIGHT", 4, 0)
     importBtn:SetText("导入CSV")
     importBtn:SetScript("OnClick", function() ShowImportDialog() end)
+    parent.importBtn = importBtn
 
     local bulkBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     bulkBtn:SetSize(72, 22)
     bulkBtn:SetPoint("LEFT", importBtn, "RIGHT", 4, 0)
     bulkBtn:SetText("批量调整")
     bulkBtn:SetScript("OnClick", function() ShowBulkAdjustDialog() end)
+    parent.bulkBtn = bulkBtn
 
     local raidBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     raidBtn:SetSize(72, 22)
     raidBtn:SetPoint("LEFT", bulkBtn, "RIGHT", 4, 0)
     raidBtn:SetText("团队加分")
     raidBtn:SetScript("OnClick", function() ShowRaidAwardDialog() end)
+    parent.raidBtn = raidBtn
 
     local logBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     logBtn:SetSize(72, 22)
     logBtn:SetPoint("LEFT", raidBtn, "RIGHT", 4, 0)
     logBtn:SetText("操作记录")
     logBtn:SetScript("OnClick", function() ShowLogDialog() end)
+
+    local exportBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    exportBtn:SetSize(56, 22)
+    exportBtn:SetPoint("LEFT", logBtn, "RIGHT", 4, 0)
+    exportBtn:SetText("导出")
+    exportBtn:SetScript("OnClick", function()
+        if DKP.ShowExportDialog then DKP.ShowExportDialog() end
+    end)
 
     -- 玩家总数
     local countText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -1731,6 +2286,13 @@ function DKP.RefreshDKPUI()
     local scrollChild = parent.scrollChild
     local players = DKP.GetSortedPlayers()
 
+    -- 权限控制：非管理员隐藏管理按钮
+    local isOfficer = DKP.IsOfficer and DKP.IsOfficer() or false
+    if parent.addBtn then parent.addBtn:SetShown(isOfficer) end
+    if parent.importBtn then parent.importBtn:SetShown(isOfficer) end
+    if parent.bulkBtn then parent.bulkBtn:SetShown(isOfficer) end
+    if parent.raidBtn then parent.raidBtn:SetShown(isOfficer) end
+
     -- 更新玩家总数
     if parent.countText then
         local total = 0
@@ -1777,6 +2339,12 @@ function DKP.RefreshDKPUI()
             row.dkpText:SetText("|cffFF4444" .. dkp .. "|r")
         end
 
+        -- 权限控制行操作按钮
+        row.quickAddBtn:SetShown(isOfficer)
+        row.quickSubBtn:SetShown(isOfficer)
+        row.editBtn:SetShown(isOfficer)
+        row.delBtn:SetShown(isOfficer)
+
         -- 按钮回调
         local playerName = entry.name
         row.quickAddBtn:SetScript("OnClick", function()
@@ -1803,7 +2371,8 @@ function DKP.RefreshDKPUI()
                 whileDead = true,
                 hideOnEscape = true,
             }
-            StaticPopup_Show("YTHT_DKP_DELETE_PLAYER")
+            local popup = StaticPopup_Show("YTHT_DKP_DELETE_PLAYER")
+            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
         end)
 
         row:Show()
