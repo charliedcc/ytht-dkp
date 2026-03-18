@@ -228,6 +228,11 @@ function DKP.RenamePlayer(oldName, newName)
             entry.player = newName
         end
     end
+    -- 同步更新管理员列表
+    if DKP.db.admins and DKP.db.admins[oldName] then
+        DKP.db.admins[oldName] = nil
+        DKP.db.admins[newName] = true
+    end
     RebuildCharLookup()
     DKP.Print("玩家重命名: " .. oldName .. " -> " .. newName)
     return true
@@ -1300,6 +1305,18 @@ local function ShowSettingsDialog()
         d.gatherBox = AddOption("集合加分", "gatherPoints", "DKP")
         d.dismissBox = AddOption("解散加分", "dismissPoints", "DKP")
         d.bossKillBox = AddOption("Boss击杀", "bossKillPoints", "DKP")
+
+        -- Boss击杀加分开关
+        local bossToggle = CreateFrame("CheckButton", nil, d, "UICheckButtonTemplate")
+        bossToggle:SetSize(24, 24)
+        bossToggle:SetPoint("TOPLEFT", 20, y)
+        local bossToggleLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        bossToggleLabel:SetPoint("LEFT", bossToggle, "RIGHT", 2, 0)
+        bossToggleLabel:SetText("启用Boss击杀自动加分")
+        bossToggleLabel:SetTextColor(0.8, 0.8, 0.8)
+        d.bossToggle = bossToggle
+        y = y - 28
+
         d.durationBox = AddOption("拍卖时长", "auctionDuration", "秒")
         d.minBidBox = AddOption("最小加价", "minBidIncrement", "DKP")
         d.extendBox = AddOption("延时时间", "auctionExtendTime", "秒")
@@ -1360,57 +1377,38 @@ local function ShowSettingsDialog()
         adminLabel:SetPoint("TOPLEFT", 20, y)
         adminLabel:SetText("管理员:")
 
-        local adminText = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        adminText:SetPoint("TOPLEFT", 20, y - 18)
-        adminText:SetWidth(360)
-        adminText:SetJustifyH("LEFT")
-        adminText:SetTextColor(0.7, 0.7, 0.7)
-        d.adminText = adminText
-        y = y - 36
+        -- 管理员列表容器（可点击移除）
+        local adminListFrame = CreateFrame("Frame", nil, d)
+        adminListFrame:SetPoint("TOPLEFT", 20, y - 18)
+        adminListFrame:SetSize(360, 24)
+        d.adminListFrame = adminListFrame
+        d.adminBtns = {}
+        y = y - 44
 
+        -- 添加管理员
         local adminAddBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
-        adminAddBox:SetSize(120, 18)
+        adminAddBox:SetSize(140, 18)
         adminAddBox:SetPoint("TOPLEFT", 20, y)
         adminAddBox:SetAutoFocus(false)
         d.adminAddBox = adminAddBox
 
         local adminAddBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
-        adminAddBtn:SetSize(46, 20)
+        adminAddBtn:SetSize(72, 20)
         adminAddBtn:SetPoint("LEFT", adminAddBox, "RIGHT", 4, 0)
-        adminAddBtn:SetText("添加")
+        adminAddBtn:SetText("添加管理员")
         adminAddBtn:SetScript("OnClick", function()
             local name = d.adminAddBox:GetText():match("^%s*(.-)%s*$")
             if name and name ~= "" then
                 if not DKP.db.admins then DKP.db.admins = {} end
                 DKP.db.admins[name] = true
                 d.adminAddBox:SetText("")
-                -- 刷新显示
-                local names = {}
-                for n in pairs(DKP.db.admins) do table.insert(names, n) end
-                d.adminText:SetText(table.concat(names, ", "))
+                d.refreshAdminList()
             end
         end)
 
-        local adminRemoveBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
-        adminRemoveBox:SetSize(120, 18)
-        adminRemoveBox:SetPoint("LEFT", adminAddBtn, "RIGHT", 8, 0)
-        adminRemoveBox:SetAutoFocus(false)
-        d.adminRemoveBox = adminRemoveBox
-
-        local adminRemoveBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
-        adminRemoveBtn:SetSize(46, 20)
-        adminRemoveBtn:SetPoint("LEFT", adminRemoveBox, "RIGHT", 4, 0)
-        adminRemoveBtn:SetText("移除")
-        adminRemoveBtn:SetScript("OnClick", function()
-            local name = d.adminRemoveBox:GetText():match("^%s*(.-)%s*$")
-            if name and name ~= "" and name ~= DKP.playerName and DKP.db.admins then
-                DKP.db.admins[name] = nil
-                d.adminRemoveBox:SetText("")
-                local names = {}
-                for n in pairs(DKP.db.admins) do table.insert(names, n) end
-                d.adminText:SetText(table.concat(names, ", "))
-            end
-        end)
+        local adminNote = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        adminNote:SetPoint("LEFT", adminAddBtn, "RIGHT", 8, 0)
+        adminNote:SetText("|cff888888点击名字可移除|r")
 
         -- 底部按钮
         local saveBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
@@ -1445,6 +1443,7 @@ local function ShowSettingsDialog()
     d.gatherBox:SetText(tostring(opts.gatherPoints or 3))
     d.dismissBox:SetText(tostring(opts.dismissPoints or 2))
     d.bossKillBox:SetText(tostring(opts.bossKillPoints or 5))
+    d.bossToggle:SetChecked(opts.enableBossKillBonus ~= false)
     d.durationBox:SetText(tostring(opts.auctionDuration or 300))
     d.minBidBox:SetText(tostring(opts.minBidIncrement or 1))
     d.extendBox:SetText(tostring(opts.auctionExtendTime or 10))
@@ -1454,18 +1453,71 @@ local function ShowSettingsDialog()
     d.diffHeroicBox:SetText(tostring(bbd[15] or 3))
     d.diffMythicBox:SetText(tostring(bbd[16] or 5))
 
-    local adminNames = {}
-    if DKP.db.admins then
-        for name in pairs(DKP.db.admins) do table.insert(adminNames, name) end
+    -- 刷新管理员列表（可点击移除）
+    d.refreshAdminList = function()
+        -- 清除旧按钮
+        for _, btn in ipairs(d.adminBtns) do btn:Hide() end
+        wipe(d.adminBtns)
+
+        local xOff = 0
+        if DKP.db.admins then
+            for name in pairs(DKP.db.admins) do
+                local btn = CreateFrame("Button", nil, d.adminListFrame)
+                btn:SetSize(0, 20)
+                btn:SetPoint("LEFT", d.adminListFrame, "LEFT", xOff, 0)
+
+                local bg = btn:CreateTexture(nil, "BACKGROUND")
+                bg:SetAllPoints()
+                bg:SetColorTexture(0.2, 0.2, 0.3, 0.7)
+
+                local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+                hl:SetAllPoints()
+                hl:SetColorTexture(0.8, 0.2, 0.2, 0.3)
+
+                local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                text:SetPoint("LEFT", 6, 0)
+                text:SetText(name)
+                if name == DKP.playerName then
+                    text:SetTextColor(0.3, 1, 0.3)  -- 自己绿色
+                else
+                    text:SetTextColor(0.9, 0.9, 0.9)
+                end
+
+                local w = text:GetStringWidth() + 12
+                btn:SetWidth(math.max(w, 40))
+
+                btn:SetScript("OnClick", function()
+                    if name == DKP.playerName then
+                        DKP.Print("不能移除自己")
+                        return
+                    end
+                    DKP.db.admins[name] = nil
+                    d.refreshAdminList()
+                end)
+
+                table.insert(d.adminBtns, btn)
+                xOff = xOff + btn:GetWidth() + 4
+            end
+        end
+
+        if #d.adminBtns == 0 then
+            local empty = CreateFrame("Button", nil, d.adminListFrame)
+            empty:SetSize(80, 20)
+            empty:SetPoint("LEFT", 0, 0)
+            local t = empty:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            t:SetPoint("LEFT", 4, 0)
+            t:SetText("|cff888888(未配置)|r")
+            table.insert(d.adminBtns, empty)
+        end
     end
-    d.adminText:SetText(#adminNames > 0 and table.concat(adminNames, ", ") or "(未配置)")
+    d.refreshAdminList()
     d.adminAddBox:SetText("")
-    d.adminRemoveBox:SetText("")
 
     d.saveBtn:SetScript("OnClick", function()
         opts.gatherPoints = tonumber(d.gatherBox:GetText()) or opts.gatherPoints
         opts.dismissPoints = tonumber(d.dismissBox:GetText()) or opts.dismissPoints
         opts.bossKillPoints = tonumber(d.bossKillBox:GetText()) or opts.bossKillPoints
+        opts.enableBossKillBonus = d.bossToggle:GetChecked()
         opts.auctionDuration = tonumber(d.durationBox:GetText()) or opts.auctionDuration
         opts.minBidIncrement = tonumber(d.minBidBox:GetText()) or opts.minBidIncrement
         opts.auctionExtendTime = tonumber(d.extendBox:GetText()) or opts.auctionExtendTime
