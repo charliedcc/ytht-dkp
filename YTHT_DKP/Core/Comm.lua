@@ -87,6 +87,55 @@ local function DeserializePlayers(text)
 end
 
 ----------------------------------------------------------------------
+-- 全量同步：序列化 options 数据
+----------------------------------------------------------------------
+local function SerializeOptions()
+    local opts = DKP.db.options
+    if not opts then return "" end
+    local parts = {}
+    local keys = { "gatherPoints", "dismissPoints", "bossKillPoints", "auctionDuration",
+        "minBidIncrement", "auctionExtendTime", "defaultStartingBid", "enableBossKillBonus",
+        "progressionBonusPoints", "wipeBonus", "wipeBonusMax" }
+    for _, k in ipairs(keys) do
+        local v = opts[k]
+        if v ~= nil then
+            table.insert(parts, k .. "=" .. tostring(v))
+        end
+    end
+    if opts.defaultBidByDifficulty then
+        local diffParts = {}
+        for did, dpts in pairs(opts.defaultBidByDifficulty) do
+            table.insert(diffParts, tostring(did) .. ":" .. tostring(dpts))
+        end
+        table.insert(parts, "defaultBidByDifficulty=" .. table.concat(diffParts, ";"))
+    end
+    return table.concat(parts, "\n")
+end
+
+local function DeserializeOptions(text)
+    local result = {}
+    for line in text:gmatch("[^\n]+") do
+        local key, val = line:match("^(.-)=(.+)$")
+        if key and val then
+            if key == "defaultBidByDifficulty" then
+                result[key] = {}
+                for entry in val:gmatch("[^;]+") do
+                    local did, dpts = entry:match("^(%d+):(%d+)$")
+                    if did then result[key][tonumber(did)] = tonumber(dpts) end
+                end
+            elseif val == "true" then
+                result[key] = true
+            elseif val == "false" then
+                result[key] = false
+            else
+                result[key] = tonumber(val) or val
+            end
+        end
+    end
+    return result
+end
+
+----------------------------------------------------------------------
 -- 分包发送
 ----------------------------------------------------------------------
 local function SendChunked(prefix, msgType, data, channel, target)
@@ -113,12 +162,15 @@ end
 local function HandleSyncRequest(sender)
     if not DKP.IsOfficer() then return end
     local data = SerializePlayers()
-    if data == "" then return end
-
-    local channel = GetChannel()
-    if channel then
+    if data ~= "" then
         SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", data, nil, sender)
     end
+    -- 同时发送 options 和 admin 列表
+    local optsData = SerializeOptions()
+    if optsData ~= "" then
+        SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, nil, sender)
+    end
+    DKP.BroadcastAdminSync()
 end
 
 ----------------------------------------------------------------------
@@ -410,6 +462,71 @@ local function HandleHistoryEntry(parts, sender)
 end
 
 ----------------------------------------------------------------------
+-- 全量广播（含 players + options + admins）
+----------------------------------------------------------------------
+function DKP.BroadcastFullSync()
+    if not DKP.IsOfficer() then return end
+
+    -- 广播 admin 列表
+    DKP.BroadcastAdminSync()
+
+    -- 广播 players 数据
+    local playersData = SerializePlayers()
+    if playersData ~= "" then
+        local channel = GetChannel()
+        if channel then
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", playersData, channel)
+        end
+    end
+
+    -- 广播 options
+    local optsData = SerializeOptions()
+    if optsData ~= "" then
+        local channel = GetChannel()
+        if channel then
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, channel)
+        end
+    end
+end
+
+local pendingOptSync = {}
+
+local function HandleOptionsChunk(parts, sender)
+    local chunkIndex = tonumber(parts[2])
+    local totalChunks = tonumber(parts[3])
+    local chunkData = parts[4] or ""
+    if not chunkIndex or not totalChunks then return end
+
+    local sKey = sender .. "_opts"
+    if not pendingOptSync[sKey] then
+        pendingOptSync[sKey] = { chunks = {}, expected = totalChunks }
+    end
+    local sync = pendingOptSync[sKey]
+    sync.chunks[chunkIndex] = chunkData
+
+    local received = 0
+    for _ in pairs(sync.chunks) do received = received + 1 end
+
+    if received >= sync.expected then
+        local fullData = {}
+        for i = 1, sync.expected do
+            table.insert(fullData, sync.chunks[i] or "")
+        end
+        local text = table.concat(fullData)
+        pendingOptSync[sKey] = nil
+
+        local newOpts = DeserializeOptions(text)
+        if next(newOpts) then
+            for k, v in pairs(newOpts) do
+                DKP.db.options[k] = v
+            end
+            local senderShort = sender:match("^([^%-]+)") or sender
+            DKP.Print("已同步配置 (来自 " .. senderShort .. ")")
+        end
+    end
+end
+
+----------------------------------------------------------------------
 -- 事件处理
 ----------------------------------------------------------------------
 local commFrame = CreateFrame("Frame")
@@ -434,6 +551,8 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
             HandleSyncRequest(sender)
         elseif msgType == "SYNC_FULL" then
             HandleSyncChunk(parts, sender)
+        elseif msgType == "SYNC_OPTIONS" then
+            HandleOptionsChunk(parts, sender)
         elseif msgType == "ADMIN_SYNC" then
             HandleAdminSync(parts, sender)
         elseif msgType == "HISTORY_ENTRY" then

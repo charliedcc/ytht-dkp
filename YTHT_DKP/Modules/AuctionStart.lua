@@ -151,9 +151,12 @@ function DKP.ShowAuctionStartDialog(itemLink, itemData, bossData)
         startDialog.itemText:SetTextColor(1, 1, 1)
     end
 
-    -- 默认值
-    startDialog.bidBox:SetText(tostring(DKP.db.options.defaultStartingBid or 10))
-    startDialog.durBox:SetText(tostring(DKP.db.options.auctionDuration or 30))
+    -- 默认值（按副本难度确定起拍价）
+    local _, _, difficultyID = GetInstanceInfo()
+    local bidByDiff = DKP.db.options.defaultBidByDifficulty
+    local startBid = bidByDiff and bidByDiff[difficultyID] or DKP.db.options.defaultStartingBid or 1
+    startDialog.bidBox:SetText(tostring(startBid))
+    startDialog.durBox:SetText(tostring(DKP.db.options.auctionDuration or 300))
 
     -- 存储引用
     startDialog.currentItemLink = itemLink

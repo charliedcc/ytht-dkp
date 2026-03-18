@@ -69,6 +69,28 @@ function DKP.InitAuctionLogPanel()
     leftTitle:SetText("拍卖记录")
     leftTitle:SetTextColor(0.6, 0.6, 0.6)
 
+    -- 清空记录按钮
+    local clearLogBtn = CreateFrame("Button", nil, leftFrame, "UIPanelButtonTemplate")
+    clearLogBtn:SetSize(60, 16)
+    clearLogBtn:SetPoint("LEFT", leftTitle, "RIGHT", 8, 0)
+    clearLogBtn:SetText("清空记录")
+    clearLogBtn:SetScript("OnClick", function()
+        StaticPopupDialogs["YTHT_DKP_CLEAR_AUCTION_LOG"] = {
+            text = "确定要清空所有拍卖记录吗？\n此操作不可撤销。",
+            button1 = "确定",
+            button2 = "取消",
+            OnAccept = function()
+                wipe(DKP.db.auctionHistory)
+                DKP.hasUnsavedChanges = true
+                DKP.Print("拍卖记录已清空")
+                if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+            end,
+            timeout = 0, whileDead = true, hideOnEscape = true,
+        }
+        local popup = StaticPopup_Show("YTHT_DKP_CLEAR_AUCTION_LOG")
+        if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+    end)
+
     -- 左侧滚动区
     local leftScroll = CreateFrame("ScrollFrame", "YTHTDKPAuctionLogLeftScroll", leftFrame, "UIPanelScrollFrameTemplate")
     leftScroll:SetPoint("TOPLEFT", 0, -18)

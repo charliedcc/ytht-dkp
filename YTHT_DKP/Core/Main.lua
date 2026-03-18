@@ -149,6 +149,34 @@ local function CreateMainFrame()
     hDKP:SetText("DKP")
     hDKP:SetTextColor(0.7, 0.7, 0.7)
 
+    -- 清空拍卖表按钮
+    local clearSheetBtn = CreateFrame("Button", nil, lootContent, "UIPanelButtonTemplate")
+    clearSheetBtn:SetSize(72, 18)
+    clearSheetBtn:SetPoint("RIGHT", headerBg, "RIGHT", 0, 0)
+    clearSheetBtn:SetText("清空拍卖表")
+    clearSheetBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer or not DKP.IsOfficer() then return end
+        StaticPopupDialogs["YTHT_DKP_CLEAR_SHEET"] = {
+            text = "确定要清空当前拍卖表吗？\n(所有Boss和装备记录将被删除)",
+            button1 = "确定",
+            button2 = "取消",
+            OnAccept = function()
+                local sheetName = DKP.db.currentSheet
+                if sheetName and DKP.db.sheets[sheetName] then
+                    DKP.db.sheets[sheetName] = nil
+                    DKP.db.currentSheet = nil
+                    DKP.hasUnsavedChanges = true
+                    DKP.Print("已清空拍卖表: " .. sheetName)
+                    DKP.RefreshTableUI()
+                end
+            end,
+            timeout = 0, whileDead = true, hideOnEscape = true,
+        }
+        local popup = StaticPopup_Show("YTHT_DKP_CLEAR_SHEET")
+        if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+    end)
+    f.clearSheetBtn = clearSheetBtn
+
     -- 滚动区域
     local scrollFrame = CreateFrame("ScrollFrame", "YTHTDKPScrollFrame", lootContent, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", lootContent, "TOPLEFT", PADDING, -22)
@@ -288,6 +316,14 @@ local function CreateItemRow(parent, itemIndex, yOffset)
     manualBtn:Hide()
     row.manualBtn = manualBtn
 
+    -- 删除按钮
+    local delItemBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    delItemBtn:SetSize(20, 18)
+    delItemBtn:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+    delItemBtn:SetText("X")
+    delItemBtn:Hide()
+    row.delItemBtn = delItemBtn
+
     -- 状态文字
     local statusText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     statusText:SetPoint("LEFT", row, "LEFT", ITEM_ICON_SIZE + ITEM_LINK_WIDTH + WINNER_WIDTH + DKP_WIDTH + 16, 0)
@@ -334,6 +370,7 @@ local function SetItemRowData(row, itemData)
         row.auctionBtn:Hide()
         row.manualBtn:Hide()
         row.statusText:Hide()
+        if row.delItemBtn then row.delItemBtn:Hide() end
         row:Hide()
         return
     end
@@ -425,6 +462,28 @@ local function SetItemRowData(row, itemData)
                     DKP.ShowManualAssignDialog(itemData.link, itemData, row.bossData)
                 end
             end)
+        end
+    end
+
+    -- 删除按钮（管理员可见）
+    if row.delItemBtn then
+        if isOfficer then
+            row.delItemBtn:Show()
+            row.delItemBtn:SetScript("OnClick", function()
+                if not row.bossData or not itemData then return end
+                local items = row.bossData.items
+                if not items then return end
+                for idx, item in ipairs(items) do
+                    if item == itemData then
+                        table.remove(items, idx)
+                        DKP.hasUnsavedChanges = true
+                        DKP.RefreshTableUI()
+                        return
+                    end
+                end
+            end)
+        else
+            row.delItemBtn:Hide()
         end
     end
 

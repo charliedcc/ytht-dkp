@@ -344,6 +344,61 @@ local function CreateDialogFrame(name, width, height, title)
     return d
 end
 
+----------------------------------------------------------------------
+-- 通用重命名对话框（替代 StaticPopup，解决 WoW 12.0 兼容问题）
+----------------------------------------------------------------------
+local renameDialog
+local function ShowRenameDialog(promptText, currentName, onConfirm)
+    if not renameDialog then
+        local d = CreateDialogFrame("YTHTDKPRenameDialog", 300, 130, "重命名")
+        d:SetFrameLevel(220)  -- 高于编辑对话框(200)
+
+        local prompt = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        prompt:SetPoint("TOPLEFT", 20, -38)
+        prompt:SetWidth(260)
+        prompt:SetJustifyH("LEFT")
+        d.prompt = prompt
+
+        local editBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        editBox:SetSize(260, 20)
+        editBox:SetPoint("TOPLEFT", 20, -58)
+        editBox:SetAutoFocus(true)
+        d.editBox = editBox
+
+        local confirmBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        confirmBtn:SetSize(80, 24)
+        confirmBtn:SetPoint("BOTTOMLEFT", 20, 10)
+        confirmBtn:SetText("确定")
+        d.confirmBtn = confirmBtn
+
+        local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        cancelBtn:SetSize(80, 24)
+        cancelBtn:SetPoint("BOTTOMRIGHT", -20, 10)
+        cancelBtn:SetText("取消")
+        cancelBtn:SetScript("OnClick", function() d:Hide() end)
+
+        editBox:SetScript("OnEnterPressed", function(self)
+            d.confirmBtn:Click()
+        end)
+        editBox:SetScript("OnEscapePressed", function() d:Hide() end)
+
+        renameDialog = d
+    end
+
+    renameDialog.prompt:SetText(promptText)
+    renameDialog.editBox:SetText(currentName or "")
+    renameDialog.editBox:HighlightText()
+    renameDialog.confirmBtn:SetScript("OnClick", function()
+        local newName = renameDialog.editBox:GetText():match("^%s*(.-)%s*$")
+        if newName and newName ~= "" then
+            onConfirm(newName)
+        end
+        renameDialog:Hide()
+    end)
+    renameDialog:Show()
+    renameDialog.editBox:SetFocus()
+end
+
 local function CreateClassDropdown(parent, name, xAnchor, yAnchor, anchorTo)
     local dropdown = CreateFrame("Frame", name, parent, "UIDropDownMenuTemplate")
     if anchorTo then
@@ -561,31 +616,15 @@ local function ShowEditPlayerDialog(playerName)
         renameBtn:SetPoint("TOPLEFT", 16, -36)
         renameBtn:SetText("重命名")
         renameBtn:SetScript("OnClick", function()
-            StaticPopupDialogs["YTHT_DKP_RENAME_PLAYER"] = {
-                text = "输入新的玩家名称:",
-                button1 = "确定",
-                button2 = "取消",
-                hasEditBox = true,
-                OnShow = function(self)
-                    self.editBox:SetText(editingPlayerName or "")
-                    self.editBox:HighlightText()
-                end,
-                OnAccept = function(self)
-                    local newName = self.editBox:GetText():match("^%s*(.-)%s*$")
-                    if newName ~= "" and editingPlayerName and newName ~= editingPlayerName then
-                        if DKP.RenamePlayer(editingPlayerName, newName) then
-                            editingPlayerName = newName
-                            RefreshEditDialog()
-                            DKP.RefreshDKPUI()
-                        end
+            ShowRenameDialog("输入新的玩家名称:", editingPlayerName, function(newName)
+                if newName ~= editingPlayerName and editingPlayerName then
+                    if DKP.RenamePlayer(editingPlayerName, newName) then
+                        editingPlayerName = newName
+                        RefreshEditDialog()
+                        DKP.RefreshDKPUI()
                     end
-                end,
-                timeout = 0,
-                whileDead = true,
-                hideOnEscape = true,
-            }
-            local popup = StaticPopup_Show("YTHT_DKP_RENAME_PLAYER")
-            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+                end
+            end)
         end)
 
         -- === 角色列表 ===
@@ -791,29 +830,13 @@ local function ShowEditPlayerDialog(playerName)
             end)
 
             row.renameCharBtn:SetScript("OnClick", function()
-                StaticPopupDialogs["YTHT_DKP_RENAME_CHAR"] = {
-                    text = "输入新的角色名:",
-                    button1 = "确定",
-                    button2 = "取消",
-                    hasEditBox = true,
-                    OnShow = function(self)
-                        self.editBox:SetText(charName)
-                        self.editBox:HighlightText()
-                    end,
-                    OnAccept = function(self)
-                        local newName = self.editBox:GetText():match("^%s*(.-)%s*$")
-                        if newName ~= "" and newName ~= charName and editingPlayerName then
-                            DKP.RenameCharacter(editingPlayerName, charName, newName)
-                            RefreshEditDialog()
-                            DKP.RefreshDKPUI()
-                        end
-                    end,
-                    timeout = 0,
-                    whileDead = true,
-                    hideOnEscape = true,
-                }
-                local popup = StaticPopup_Show("YTHT_DKP_RENAME_CHAR")
-                if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+                ShowRenameDialog("输入新的角色名:", charName, function(newName)
+                    if newName ~= charName and editingPlayerName then
+                        DKP.RenameCharacter(editingPlayerName, charName, newName)
+                        RefreshEditDialog()
+                        DKP.RefreshDKPUI()
+                    end
+                end)
             end)
 
             row.delBtn:SetScript("OnClick", function()
@@ -1131,7 +1154,7 @@ local bulkDialog
 
 local function ShowBulkAdjustDialog()
     if not bulkDialog then
-        local d = CreateDialogFrame("YTHTDKPBulkDialog", 300, 180, "全员DKP调整")
+        local d = CreateDialogFrame("YTHTDKPBulkDialog", 300, 250, "全员DKP调整")
 
         local amtLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         amtLabel:SetPoint("TOPLEFT", 20, -45)
@@ -1155,7 +1178,7 @@ local function ShowBulkAdjustDialog()
 
         local addBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
         addBtn:SetSize(80, 24)
-        addBtn:SetPoint("BOTTOMLEFT", 16, 14)
+        addBtn:SetPoint("TOPLEFT", 16, -105)
         addBtn:SetText("全员加分")
         addBtn:SetScript("OnClick", function()
             local val = tonumber(d.amtBox:GetText())
@@ -1168,7 +1191,7 @@ local function ShowBulkAdjustDialog()
 
         local subBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
         subBtn:SetSize(80, 24)
-        subBtn:SetPoint("BOTTOM", 0, 14)
+        subBtn:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
         subBtn:SetText("全员扣分")
         subBtn:SetScript("OnClick", function()
             local val = tonumber(d.amtBox:GetText())
@@ -1178,6 +1201,56 @@ local function ShowBulkAdjustDialog()
                 d:Hide()
             end
         end)
+
+        -- 分割线
+        local divider = d:CreateTexture(nil, "ARTWORK")
+        divider:SetPoint("TOPLEFT", 16, -140)
+        divider:SetPoint("TOPRIGHT", -16, -140)
+        divider:SetHeight(1)
+        divider:SetColorTexture(0.3, 0.3, 0.4, 0.5)
+
+        -- DKP 衰减
+        local decayLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        decayLabel:SetPoint("TOPLEFT", 20, -155)
+        decayLabel:SetText("DKP衰减:")
+
+        local decayBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        decayBox:SetSize(50, 20)
+        decayBox:SetPoint("LEFT", decayLabel, "RIGHT", 8, 0)
+        decayBox:SetAutoFocus(false)
+        decayBox:SetNumeric(true)
+        d.decayBox = decayBox
+
+        local pctLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        pctLabel:SetPoint("LEFT", decayBox, "RIGHT", 4, 0)
+        pctLabel:SetText("%")
+
+        local decayBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        decayBtn:SetSize(80, 24)
+        decayBtn:SetPoint("LEFT", pctLabel, "RIGHT", 8, 0)
+        decayBtn:SetText("执行衰减")
+        decayBtn:SetScript("OnClick", function()
+            local pct = tonumber(d.decayBox:GetText())
+            if pct and pct > 0 and pct <= 100 then
+                local count = 0
+                for name, data in pairs(DKP.db.players) do
+                    if (data.dkp or 0) > 0 then
+                        local decay = math.ceil(data.dkp * pct / 100)
+                        DKP.AdjustDKP(name, -decay, "DKP衰减 " .. pct .. "%")
+                        count = count + 1
+                    end
+                end
+                DKP.Print("DKP衰减 " .. pct .. "%: " .. count .. " 名玩家受影响")
+                DKP.RefreshDKPUI()
+                d:Hide()
+            else
+                DKP.Print("请输入1-100之间的百分比")
+            end
+        end)
+
+        local decayNote = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        decayNote:SetPoint("TOPLEFT", 20, -182)
+        decayNote:SetText("|cff888888扣除分数向上取整，仅对正DKP玩家生效|r")
 
         local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
         cancelBtn:SetSize(80, 24)
@@ -1190,8 +1263,222 @@ local function ShowBulkAdjustDialog()
 
     bulkDialog.amtBox:SetText("")
     bulkDialog.reasonBox:SetText("")
+    bulkDialog.decayBox:SetText("")
     bulkDialog:Show()
     bulkDialog.amtBox:SetFocus()
+end
+
+----------------------------------------------------------------------
+-- 对话框：管理设置
+----------------------------------------------------------------------
+local settingsDialog
+
+local function ShowSettingsDialog()
+    if not settingsDialog then
+        local d = CreateDialogFrame("YTHTDKPSettingsDialog", 400, 400, "管理设置")
+
+        local y = -40
+        local function AddOption(label, key, suffix)
+            local lb = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            lb:SetPoint("TOPLEFT", 20, y)
+            lb:SetText(label .. ":")
+            local box = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+            box:SetSize(60, 20)
+            box:SetPoint("LEFT", lb, "RIGHT", 8, 0)
+            box:SetAutoFocus(false)
+            box:SetNumeric(true)
+            if suffix then
+                local sfx = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                sfx:SetPoint("LEFT", box, "RIGHT", 4, 0)
+                sfx:SetText(suffix)
+                sfx:SetTextColor(0.6, 0.6, 0.6)
+            end
+            y = y - 28
+            return box
+        end
+
+        d.gatherBox = AddOption("集合加分", "gatherPoints", "DKP")
+        d.dismissBox = AddOption("解散加分", "dismissPoints", "DKP")
+        d.bossKillBox = AddOption("Boss击杀", "bossKillPoints", "DKP")
+        d.durationBox = AddOption("拍卖时长", "auctionDuration", "秒")
+        d.minBidBox = AddOption("最小加价", "minBidIncrement", "DKP")
+        d.extendBox = AddOption("延时时间", "auctionExtendTime", "秒")
+
+        -- 难度起拍价
+        local diffLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        diffLabel:SetPoint("TOPLEFT", 20, y)
+        diffLabel:SetText("难度起拍:")
+        y = y - 24
+
+        local function AddDiffOption(label, diffID)
+            local lb = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            lb:SetPoint("TOPLEFT", 30, y)
+            lb:SetText(label .. ":")
+            lb:SetTextColor(0.8, 0.8, 0.8)
+            local box = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+            box:SetSize(40, 18)
+            box:SetPoint("LEFT", lb, "RIGHT", 6, 0)
+            box:SetAutoFocus(false)
+            box:SetNumeric(true)
+            return box
+        end
+
+        -- 横向排列三个难度
+        local normalLb = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        normalLb:SetPoint("TOPLEFT", 30, y)
+        normalLb:SetText("普通:")
+        normalLb:SetTextColor(0.8, 0.8, 0.8)
+        d.diffNormalBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        d.diffNormalBox:SetSize(36, 18)
+        d.diffNormalBox:SetPoint("LEFT", normalLb, "RIGHT", 4, 0)
+        d.diffNormalBox:SetAutoFocus(false)
+        d.diffNormalBox:SetNumeric(true)
+
+        local heroicLb = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        heroicLb:SetPoint("LEFT", d.diffNormalBox, "RIGHT", 12, 0)
+        heroicLb:SetText("英雄:")
+        heroicLb:SetTextColor(0.8, 0.8, 0.8)
+        d.diffHeroicBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        d.diffHeroicBox:SetSize(36, 18)
+        d.diffHeroicBox:SetPoint("LEFT", heroicLb, "RIGHT", 4, 0)
+        d.diffHeroicBox:SetAutoFocus(false)
+        d.diffHeroicBox:SetNumeric(true)
+
+        local mythicLb = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        mythicLb:SetPoint("LEFT", d.diffHeroicBox, "RIGHT", 12, 0)
+        mythicLb:SetText("史诗:")
+        mythicLb:SetTextColor(0.8, 0.8, 0.8)
+        d.diffMythicBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        d.diffMythicBox:SetSize(36, 18)
+        d.diffMythicBox:SetPoint("LEFT", mythicLb, "RIGHT", 4, 0)
+        d.diffMythicBox:SetAutoFocus(false)
+        d.diffMythicBox:SetNumeric(true)
+        y = y - 28
+
+        -- 管理员列表
+        local adminLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        adminLabel:SetPoint("TOPLEFT", 20, y)
+        adminLabel:SetText("管理员:")
+
+        local adminText = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        adminText:SetPoint("TOPLEFT", 20, y - 18)
+        adminText:SetWidth(360)
+        adminText:SetJustifyH("LEFT")
+        adminText:SetTextColor(0.7, 0.7, 0.7)
+        d.adminText = adminText
+        y = y - 36
+
+        local adminAddBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        adminAddBox:SetSize(120, 18)
+        adminAddBox:SetPoint("TOPLEFT", 20, y)
+        adminAddBox:SetAutoFocus(false)
+        d.adminAddBox = adminAddBox
+
+        local adminAddBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        adminAddBtn:SetSize(46, 20)
+        adminAddBtn:SetPoint("LEFT", adminAddBox, "RIGHT", 4, 0)
+        adminAddBtn:SetText("添加")
+        adminAddBtn:SetScript("OnClick", function()
+            local name = d.adminAddBox:GetText():match("^%s*(.-)%s*$")
+            if name and name ~= "" then
+                if not DKP.db.admins then DKP.db.admins = {} end
+                DKP.db.admins[name] = true
+                d.adminAddBox:SetText("")
+                -- 刷新显示
+                local names = {}
+                for n in pairs(DKP.db.admins) do table.insert(names, n) end
+                d.adminText:SetText(table.concat(names, ", "))
+            end
+        end)
+
+        local adminRemoveBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        adminRemoveBox:SetSize(120, 18)
+        adminRemoveBox:SetPoint("LEFT", adminAddBtn, "RIGHT", 8, 0)
+        adminRemoveBox:SetAutoFocus(false)
+        d.adminRemoveBox = adminRemoveBox
+
+        local adminRemoveBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        adminRemoveBtn:SetSize(46, 20)
+        adminRemoveBtn:SetPoint("LEFT", adminRemoveBox, "RIGHT", 4, 0)
+        adminRemoveBtn:SetText("移除")
+        adminRemoveBtn:SetScript("OnClick", function()
+            local name = d.adminRemoveBox:GetText():match("^%s*(.-)%s*$")
+            if name and name ~= "" and name ~= DKP.playerName and DKP.db.admins then
+                DKP.db.admins[name] = nil
+                d.adminRemoveBox:SetText("")
+                local names = {}
+                for n in pairs(DKP.db.admins) do table.insert(names, n) end
+                d.adminText:SetText(table.concat(names, ", "))
+            end
+        end)
+
+        -- 底部按钮
+        local saveBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        saveBtn:SetSize(70, 24)
+        saveBtn:SetPoint("BOTTOMLEFT", 16, 10)
+        saveBtn:SetText("保存")
+        d.saveBtn = saveBtn
+
+        local broadcastBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        broadcastBtn:SetSize(80, 24)
+        broadcastBtn:SetPoint("BOTTOM", 0, 10)
+        broadcastBtn:SetText("广播配置")
+        broadcastBtn:SetScript("OnClick", function()
+            if DKP.BroadcastFullSync then
+                DKP.BroadcastFullSync()
+                DKP.Print("已广播全部数据到团队")
+            end
+        end)
+
+        local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        cancelBtn:SetSize(70, 24)
+        cancelBtn:SetPoint("BOTTOMRIGHT", -16, 10)
+        cancelBtn:SetText("取消")
+        cancelBtn:SetScript("OnClick", function() d:Hide() end)
+
+        settingsDialog = d
+    end
+
+    local d = settingsDialog
+    local opts = DKP.db.options
+
+    d.gatherBox:SetText(tostring(opts.gatherPoints or 3))
+    d.dismissBox:SetText(tostring(opts.dismissPoints or 2))
+    d.bossKillBox:SetText(tostring(opts.bossKillPoints or 5))
+    d.durationBox:SetText(tostring(opts.auctionDuration or 300))
+    d.minBidBox:SetText(tostring(opts.minBidIncrement or 1))
+    d.extendBox:SetText(tostring(opts.auctionExtendTime or 10))
+
+    local bbd = opts.defaultBidByDifficulty or {}
+    d.diffNormalBox:SetText(tostring(bbd[14] or 1))
+    d.diffHeroicBox:SetText(tostring(bbd[15] or 3))
+    d.diffMythicBox:SetText(tostring(bbd[16] or 5))
+
+    local adminNames = {}
+    if DKP.db.admins then
+        for name in pairs(DKP.db.admins) do table.insert(adminNames, name) end
+    end
+    d.adminText:SetText(#adminNames > 0 and table.concat(adminNames, ", ") or "(未配置)")
+    d.adminAddBox:SetText("")
+    d.adminRemoveBox:SetText("")
+
+    d.saveBtn:SetScript("OnClick", function()
+        opts.gatherPoints = tonumber(d.gatherBox:GetText()) or opts.gatherPoints
+        opts.dismissPoints = tonumber(d.dismissBox:GetText()) or opts.dismissPoints
+        opts.bossKillPoints = tonumber(d.bossKillBox:GetText()) or opts.bossKillPoints
+        opts.auctionDuration = tonumber(d.durationBox:GetText()) or opts.auctionDuration
+        opts.minBidIncrement = tonumber(d.minBidBox:GetText()) or opts.minBidIncrement
+        opts.auctionExtendTime = tonumber(d.extendBox:GetText()) or opts.auctionExtendTime
+        if not opts.defaultBidByDifficulty then opts.defaultBidByDifficulty = {} end
+        opts.defaultBidByDifficulty[14] = tonumber(d.diffNormalBox:GetText()) or 1
+        opts.defaultBidByDifficulty[15] = tonumber(d.diffHeroicBox:GetText()) or 3
+        opts.defaultBidByDifficulty[16] = tonumber(d.diffMythicBox:GetText()) or 5
+        DKP.hasUnsavedChanges = true
+        DKP.Print("设置已保存")
+        d:Hide()
+    end)
+
+    d:Show()
 end
 
 ----------------------------------------------------------------------
@@ -2110,21 +2397,9 @@ local function CreatePlayerRow(parent, index)
     -- 操作按钮
     local opsX = COL_NAME_WIDTH + COL_CHARS_WIDTH + COL_DKP_WIDTH + 8
 
-    local quickAddBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    quickAddBtn:SetSize(26, 20)
-    quickAddBtn:SetPoint("LEFT", row, "LEFT", opsX, 0)
-    quickAddBtn:SetText("+")
-    row.quickAddBtn = quickAddBtn
-
-    local quickSubBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    quickSubBtn:SetSize(26, 20)
-    quickSubBtn:SetPoint("LEFT", quickAddBtn, "RIGHT", 2, 0)
-    quickSubBtn:SetText("-")
-    row.quickSubBtn = quickSubBtn
-
     local editBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     editBtn:SetSize(44, 20)
-    editBtn:SetPoint("LEFT", quickSubBtn, "RIGHT", 4, 0)
+    editBtn:SetPoint("LEFT", row, "LEFT", opsX, 0)
     editBtn:SetText("编辑")
     row.editBtn = editBtn
 
@@ -2184,17 +2459,94 @@ function DKP.InitDKPPanel()
     logBtn:SetText("操作记录")
     logBtn:SetScript("OnClick", function() ShowLogDialog() end)
 
+    local gatherBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    gatherBtn:SetSize(46, 22)
+    gatherBtn:SetPoint("LEFT", raidBtn, "RIGHT", 4, 0)
+    gatherBtn:SetText("集合")
+    gatherBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then return end
+        if DKP.db.session.gathered then
+            DKP.Print("本次活动已经执行过集合加分")
+            return
+        end
+        DKP.db.session.active = true
+        DKP.db.session.gathered = true
+        local points = DKP.db.options.gatherPoints or 3
+        local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
+        local count = 0
+        for _, m in ipairs(members) do
+            if m.playerName and m.online then
+                DKP.AdjustDKP(m.playerName, points, "集合")
+                count = count + 1
+            end
+        end
+        DKP.Print("集合加分: " .. count .. " 名玩家 +" .. points .. " DKP")
+        local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+        if channel then
+            SendChatMessage("[YTHT-DKP] 集合加分! 全团 +" .. points .. " DKP", channel)
+        end
+        DKP.RefreshDKPUI()
+    end)
+
+    local dismissBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    dismissBtn:SetSize(46, 22)
+    dismissBtn:SetPoint("LEFT", gatherBtn, "RIGHT", 4, 0)
+    dismissBtn:SetText("解散")
+    dismissBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then return end
+        local points = DKP.db.options.dismissPoints or 2
+        local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
+        local count = 0
+        for _, m in ipairs(members) do
+            if m.playerName and m.online then
+                DKP.AdjustDKP(m.playerName, points, "解散")
+                count = count + 1
+            end
+        end
+        DKP.Print("解散加分: " .. count .. " 名玩家 +" .. points .. " DKP")
+        DKP.db.session.active = false
+        DKP.db.session.gathered = false
+        wipe(DKP.db.session.bossKills)
+        if DKP.db.session.wipeCounts then wipe(DKP.db.session.wipeCounts) end
+        local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+        if channel then
+            SendChatMessage("[YTHT-DKP] 解散加分! 全团 +" .. points .. " DKP", channel)
+        end
+        DKP.RefreshDKPUI()
+    end)
+
     local exportBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    exportBtn:SetSize(56, 22)
-    exportBtn:SetPoint("LEFT", logBtn, "RIGHT", 4, 0)
+    exportBtn:SetSize(46, 22)
+    exportBtn:SetPoint("LEFT", dismissBtn, "RIGHT", 4, 0)
     exportBtn:SetText("导出")
     exportBtn:SetScript("OnClick", function()
         if DKP.ShowExportDialog then DKP.ShowExportDialog() end
     end)
 
+    local settingsBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    settingsBtn:SetSize(46, 22)
+    settingsBtn:SetPoint("LEFT", exportBtn, "RIGHT", 4, 0)
+    settingsBtn:SetText("设置")
+    settingsBtn:SetScript("OnClick", function() ShowSettingsDialog() end)
+
+    local broadcastBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    broadcastBtn:SetSize(56, 22)
+    broadcastBtn:SetPoint("LEFT", settingsBtn, "RIGHT", 4, 0)
+    broadcastBtn:SetText("广播")
+    broadcastBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then
+            DKP.Print("只有管理员可以广播数据")
+            return
+        end
+        if DKP.BroadcastFullSync then
+            DKP.BroadcastFullSync()
+            DKP.Print("已广播全部数据到团队")
+        end
+    end)
+
     -- 玩家总数
     local countText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    countText:SetPoint("LEFT", logBtn, "RIGHT", 12, 0)
+    countText:SetPoint("RIGHT", toolbar, "RIGHT", -130, 0)
     countText:SetTextColor(0.5, 0.5, 0.5)
     parent.countText = countText
 
@@ -2340,21 +2692,11 @@ function DKP.RefreshDKPUI()
         end
 
         -- 权限控制行操作按钮
-        row.quickAddBtn:SetShown(isOfficer)
-        row.quickSubBtn:SetShown(isOfficer)
         row.editBtn:SetShown(isOfficer)
         row.delBtn:SetShown(isOfficer)
 
         -- 按钮回调
         local playerName = entry.name
-        row.quickAddBtn:SetScript("OnClick", function()
-            DKP.AdjustDKP(playerName, (DKP.db.options.bossKillPoints or 5), "快速加分")
-            DKP.RefreshDKPUI()
-        end)
-        row.quickSubBtn:SetScript("OnClick", function()
-            DKP.AdjustDKP(playerName, -(DKP.db.options.bossKillPoints or 5), "快速扣分")
-            DKP.RefreshDKPUI()
-        end)
         row.editBtn:SetScript("OnClick", function()
             ShowEditPlayerDialog(playerName)
         end)

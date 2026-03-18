@@ -17,8 +17,8 @@ DKP.AUCTION_PREFIX = "YTHTDKPAuct"
 -- 默认设置
 local defaults = {
     options = {
-        gatherPoints = 10,
-        dismissPoints = 10,
+        gatherPoints = 3,
+        dismissPoints = 2,
         bossKillPoints = 5,
         -- Boss击杀加分开关 (true=启用, false=禁用)
         enableBossKillBonus = true,
@@ -36,8 +36,15 @@ local defaults = {
         wipeBonus = 0,
         -- 擦屁股分上限 (最多计算N次团灭)
         wipeBonusMax = 10,
-        defaultStartingBid = 10,
-        auctionDuration = 30,
+        defaultStartingBid = 1,
+        -- 按副本难度的起拍价 (difficultyID -> 起拍DKP)
+        defaultBidByDifficulty = {
+            [14] = 1,  -- 普通: 1 DKP
+            [15] = 3,  -- 英雄: 3 DKP
+            [16] = 5,  -- 史诗: 5 DKP
+            [17] = 1,  -- 随机团: 1 DKP
+        },
+        auctionDuration = 300,
         minBidIncrement = 1,
         auctionExtendTime = 10,
     },
