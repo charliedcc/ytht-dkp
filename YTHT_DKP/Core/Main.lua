@@ -280,6 +280,21 @@ local function CreateItemRow(parent, itemIndex, yOffset)
     auctionBtn:Hide()
     row.auctionBtn = auctionBtn
 
+    -- 插装备按钮（手动分配）
+    local manualBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    manualBtn:SetSize(50, 18)
+    manualBtn:SetPoint("LEFT", auctionBtn, "RIGHT", 4, 0)
+    manualBtn:SetText("插装备")
+    manualBtn:Hide()
+    row.manualBtn = manualBtn
+
+    -- 状态文字
+    local statusText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    statusText:SetPoint("LEFT", row, "LEFT", ITEM_ICON_SIZE + ITEM_LINK_WIDTH + WINNER_WIDTH + DKP_WIDTH + 16, 0)
+    statusText:SetText("")
+    statusText:Hide()
+    row.statusText = statusText
+
     -- Tooltip
     row:SetScript("OnEnter", function(self)
         if self.itemLink then
@@ -316,6 +331,9 @@ local function SetItemRowData(row, itemData)
         row.winnerText:SetText("")
         row.dkpText:SetText("")
         row.itemLink = nil
+        row.auctionBtn:Hide()
+        row.manualBtn:Hide()
+        row.statusText:Hide()
         row:Hide()
         return
     end
@@ -333,38 +351,80 @@ local function SetItemRowData(row, itemData)
         row.itemText:SetTextColor(c.r, c.g, c.b)
         row.itemText:SetText(itemName)
     else
-        -- 物品信息可能还没加载，设置回调
         row.itemText:SetText(itemData.link)
         row.itemText:SetTextColor(1, 1, 1)
         C_Item.RequestLoadItemDataByID(C_Item.GetItemInfoInstant(itemData.link))
     end
 
-    -- 获得者
-    if itemData.winner and itemData.winner ~= "" then
+    -- 默认隐藏所有按钮和状态
+    row.auctionBtn:Hide()
+    row.manualBtn:Hide()
+    row.statusText:Hide()
+
+    local isOfficer = DKP.IsOfficer and DKP.IsOfficer()
+
+    -- 清理过期的 activeAuctionID
+    if itemData.activeAuctionID and not DKP.activeAuctions[itemData.activeAuctionID] then
+        itemData.activeAuctionID = nil
+    end
+
+    -- 状态判断
+    if itemData.activeAuctionID then
+        -- 拍卖中
+        row.winnerText:SetText("|cffFFFF00拍卖中|r")
+        row.dkpText:SetText("")
+        row.statusText:Hide()
+        row.auctionBtn:SetText("查看")
+        row.auctionBtn:Show()
+        row.auctionBtn:SetScript("OnClick", function()
+            if DKP.ShowAuctionUI then DKP.ShowAuctionUI() end
+        end)
+    elseif itemData.winner == "转人工" then
+        -- 平局转人工
+        row.winnerText:SetText("|cffFF4444转人工|r")
+        if itemData.tiedAmount and itemData.tiedAmount > 0 then
+            row.dkpText:SetText("|cffFFD700" .. itemData.tiedAmount .. "|r")
+        else
+            row.dkpText:SetText("")
+        end
+        if isOfficer then
+            row.auctionBtn:SetText("插装备")
+            row.auctionBtn:SetSize(50, 18)
+            row.auctionBtn:Show()
+            row.auctionBtn:SetScript("OnClick", function()
+                if DKP.ShowManualAssignDialog then
+                    DKP.ShowManualAssignDialog(itemData.link, itemData, row.bossData)
+                end
+            end)
+        end
+    elseif itemData.winner and itemData.winner ~= "" then
+        -- 已有获胜者
         local winnerClass = itemData.winnerClass or "WARRIOR"
         row.winnerText:SetText(DKP.ClassColorText(itemData.winner, winnerClass))
+        if itemData.dkp and itemData.dkp > 0 then
+            row.dkpText:SetText("|cffFFD700" .. itemData.dkp .. "|r")
+        else
+            row.dkpText:SetText("")
+        end
     else
+        -- 未分配
         row.winnerText:SetText("|cff888888未分配|r")
-    end
-
-    -- DKP
-    if itemData.dkp and itemData.dkp > 0 then
-        row.dkpText:SetText("|cffFFD700" .. itemData.dkp .. "|r")
-    else
         row.dkpText:SetText("")
-    end
-
-    -- 拍卖按钮
-    if row.auctionBtn then
-        if DKP.IsOfficer and DKP.IsOfficer() and (not itemData.winner or itemData.winner == "") then
+        if isOfficer then
+            row.auctionBtn:SetText("拍卖")
+            row.auctionBtn:SetSize(46, 18)
             row.auctionBtn:Show()
             row.auctionBtn:SetScript("OnClick", function()
                 if DKP.ShowAuctionStartDialog then
-                    DKP.ShowAuctionStartDialog(itemData.link, itemData)
+                    DKP.ShowAuctionStartDialog(itemData.link, itemData, row.bossData)
                 end
             end)
-        else
-            row.auctionBtn:Hide()
+            row.manualBtn:Show()
+            row.manualBtn:SetScript("OnClick", function()
+                if DKP.ShowManualAssignDialog then
+                    DKP.ShowManualAssignDialog(itemData.link, itemData, row.bossData)
+                end
+            end)
         end
     end
 
@@ -460,6 +520,7 @@ function DKP.RefreshTableUI()
                 -- 重新定位到scrollChild坐标
                 itemRow:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
                 itemRow:SetWidth(scrollChild:GetWidth())
+                itemRow.bossData = bossData
                 SetItemRowData(itemRow, itemData)
                 yOffset = yOffset - ITEM_ROW_HEIGHT - ROW_SPACING
             end
@@ -640,6 +701,12 @@ end
 -- 初始化
 ----------------------------------------------------------------------
 function DKP.OnInitialized()
+    -- 初始化管理员列表
+    if not DKP.db.admins then DKP.db.admins = {} end
+    if not next(DKP.db.admins) then
+        DKP.db.admins[DKP.playerName] = true
+    end
+
     -- 创建主框架
     DKP.MainFrame = CreateMainFrame()
 
@@ -867,6 +934,47 @@ function DKP.OnInitialized()
                 DKP.Print("  /ytht bossbonus firstkill reset")
             end
 
+        elseif cmd == "admin" then
+            if not DKP.IsOfficer() then
+                DKP.Print("只有管理员可以管理管理员列表")
+                return
+            end
+            if arg1 == "add" then
+                if arg2 and arg2 ~= "" then
+                    if not DKP.db.admins then DKP.db.admins = {} end
+                    DKP.db.admins[arg2] = true
+                    DKP.Print("已添加管理员: " .. arg2)
+                    if DKP.BroadcastAdminSync then DKP.BroadcastAdminSync() end
+                else
+                    DKP.Print("用法: /ytht admin add <名字>")
+                end
+            elseif arg1 == "remove" then
+                if arg2 and arg2 ~= "" then
+                    if arg2 == DKP.playerName then
+                        DKP.Print("不能移除自己")
+                        return
+                    end
+                    if DKP.db.admins then
+                        DKP.db.admins[arg2] = nil
+                    end
+                    DKP.Print("已移除管理员: " .. arg2)
+                    if DKP.BroadcastAdminSync then DKP.BroadcastAdminSync() end
+                else
+                    DKP.Print("用法: /ytht admin remove <名字>")
+                end
+            elseif arg1 == "list" or not arg1 or arg1 == "" then
+                DKP.Print("===== 管理员列表 =====")
+                if DKP.db.admins and next(DKP.db.admins) then
+                    for name in pairs(DKP.db.admins) do
+                        DKP.Print("  " .. name)
+                    end
+                else
+                    DKP.Print("  (未配置，使用团队角色判断)")
+                end
+            else
+                DKP.Print("用法: /ytht admin add|remove|list <名字>")
+            end
+
         elseif cmd == "debug" then
             if arg1 == "additem" then
                 -- 扫描背包添加装备到拍卖表
@@ -900,7 +1008,7 @@ function DKP.OnInitialized()
             elseif arg1 == "auction" then
                 -- 直接发起测试拍卖
                 if arg2 and arg2 ~= "" then
-                    DKP.StartAuction(arg2, DKP.db.options.defaultStartingBid, DKP.db.options.auctionDuration)
+                    DKP.StartAuction(arg2, DKP.db.options.defaultStartingBid, DKP.db.options.auctionDuration, nil)
                 else
                     DKP.Print("用法: /ytht debug auction [物品链接]")
                 end
@@ -945,6 +1053,7 @@ function DKP.OnInitialized()
             DKP.Print("/ytht dismiss    - 解散加分")
             DKP.Print("/ytht session    - 查看/开始/结束活动")
             DKP.Print("/ytht export     - 导出DKP数据")
+            DKP.Print("/ytht admin      - 管理员列表管理")
             DKP.Print("/ytht bossbonus  - Boss击杀加分配置")
             DKP.Print("/ytht status     - 显示当前状态")
             DKP.Print("/ytht reset <名> - 重置指定副本数据")

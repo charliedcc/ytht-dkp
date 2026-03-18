@@ -82,7 +82,7 @@ local function CreateStartDialog()
 
     local durBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
     durBox:SetSize(80, 20)
-    durBox:SetPoint("LEFT", durLabel, "RIGHT", 8 + 20, 0)  -- 对齐起拍价输入框
+    durBox:SetPoint("LEFT", durLabel, "RIGHT", 8 + 20, 0)
     durBox:SetAutoFocus(false)
     durBox:SetNumeric(true)
     d.durBox = durBox
@@ -122,9 +122,9 @@ end
 ----------------------------------------------------------------------
 -- 显示发起拍卖对话框
 ----------------------------------------------------------------------
-function DKP.ShowAuctionStartDialog(itemLink, itemData)
+function DKP.ShowAuctionStartDialog(itemLink, itemData, bossData)
     if not DKP.IsOfficer() then
-        DKP.Print("只有团长或助理可以发起拍卖")
+        DKP.Print("只有管理员可以发起拍卖")
         return
     end
 
@@ -158,6 +158,7 @@ function DKP.ShowAuctionStartDialog(itemLink, itemData)
     -- 存储引用
     startDialog.currentItemLink = itemLink
     startDialog.currentItemData = itemData
+    startDialog.currentBossData = bossData
 
     -- 开始按钮回调
     startDialog.startBtn:SetScript("OnClick", function()
@@ -165,7 +166,22 @@ function DKP.ShowAuctionStartDialog(itemLink, itemData)
         local dur = tonumber(startDialog.durBox:GetText()) or 30
         if bid < 1 then bid = 1 end
         if dur < 5 then dur = 5 end
-        DKP.StartAuction(startDialog.currentItemLink, bid, dur)
+
+        local encounterInfo = nil
+        if startDialog.currentBossData then
+            encounterInfo = {
+                encounterID = startDialog.currentBossData.encounterID,
+                encounterName = startDialog.currentBossData.name,
+                instanceName = DKP.db.currentSheet,
+                itemData = startDialog.currentItemData,
+            }
+        elseif startDialog.currentItemData then
+            encounterInfo = {
+                itemData = startDialog.currentItemData,
+            }
+        end
+
+        DKP.StartAuction(startDialog.currentItemLink, bid, dur, encounterInfo)
         startDialog:Hide()
     end)
 

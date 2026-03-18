@@ -53,6 +53,8 @@ local defaults = {
         wipeCounts = {},    -- encounterID -> 团灭次数
         firstKills = {},    -- encounterID -> true (历史首杀记录，不随session重置)
     },
+    -- 管理员列表
+    admins = {},
     -- 拍卖历史
     auctionHistory = {},
     -- 表格数据：按副本 -> Boss -> 装备记录

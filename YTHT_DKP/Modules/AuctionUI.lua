@@ -3,6 +3,7 @@
 --
 -- 多拍卖列表竞价界面，所有人可见
 -- 列表展示所有进行中的拍卖，每项含出价/计时/竞价按钮
+-- 支持提前结束、梭哈标记、平局显示
 ----------------------------------------------------------------------
 
 local DKP = YTHT_DKP
@@ -11,7 +12,7 @@ local DKP = YTHT_DKP
 local FRAME_WIDTH = 500
 local FRAME_HEIGHT = 420
 local PADDING = 10
-local AUCTION_ROW_HEIGHT = 60  -- 每个拍卖项高度（两行）
+local AUCTION_ROW_HEIGHT = 60
 local ROW_SPACING = 4
 local ICON_SIZE = 32
 local BAR_HEIGHT = 14
@@ -108,6 +109,23 @@ local function CreateAuctionFrame()
 end
 
 ----------------------------------------------------------------------
+-- 提前结束确认弹窗
+----------------------------------------------------------------------
+StaticPopupDialogs["YTHT_DKP_EARLY_END_CONFIRM"] = {
+    text = "确定要提前结束该拍卖吗？\n当前最高出价者将获得物品。",
+    button1 = "确定",
+    button2 = "取消",
+    OnAccept = function(self, data)
+        if data and data.auctionID then
+            DKP.EndAuction(data.auctionID)
+        end
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+}
+
+----------------------------------------------------------------------
 -- 创建单个拍卖行
 ----------------------------------------------------------------------
 local function CreateAuctionRow(parent, index)
@@ -153,7 +171,7 @@ local function CreateAuctionRow(parent, index)
     -- 当前出价
     local bidInfo = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     bidInfo:SetPoint("LEFT", icon, "RIGHT", 6, -8)
-    bidInfo:SetWidth(200)
+    bidInfo:SetWidth(280)
     bidInfo:SetJustifyH("LEFT")
     bidInfo:SetWordWrap(false)
     row.bidInfo = bidInfo
@@ -209,6 +227,14 @@ local function CreateAuctionRow(parent, index)
     allIn:SetText("梭哈")
     row.allIn = allIn
 
+    -- 提前结束按钮（officer only）
+    local earlyEndBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    earlyEndBtn:SetSize(60, 20)
+    earlyEndBtn:SetPoint("RIGHT", row, "BOTTOMRIGHT", -52, 14)
+    earlyEndBtn:SetText("提前结束")
+    earlyEndBtn:Hide()
+    row.earlyEndBtn = earlyEndBtn
+
     local cancelBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     cancelBtn:SetSize(42, 20)
     cancelBtn:SetPoint("BOTTOMRIGHT", -6, 4)
@@ -240,9 +266,17 @@ local function SetAuctionRowData(row, auction)
         row.itemName:SetTextColor(1, 1, 1)
     end
 
-    -- 出价信息
+    -- 出价信息（含平局显示）
     local bidText
-    if auction.currentBid > 0 and auction.currentBidder then
+    if auction.tiedBidders and #auction.tiedBidders >= 2 then
+        -- 平局显示
+        local names = {}
+        for _, tb in ipairs(auction.tiedBidders) do
+            table.insert(names, tb.name)
+        end
+        bidText = "|cffFF4444梭哈平局!|r " .. table.concat(names, " vs ") ..
+            " @ |cffFFD700" .. auction.currentBid .. "|r DKP"
+    elseif auction.currentBid > 0 and auction.currentBidder then
         local bidderClass = "WARRIOR"
         if auction.currentBidderPlayer then
             local pData = DKP.db.players[auction.currentBidderPlayer]
@@ -255,8 +289,9 @@ local function SetAuctionRowData(row, auction)
                 end
             end
         end
+        local allInTag = auction.currentBidIsAllIn and " |cffFF8800[梭哈]|r" or ""
         bidText = "当前: |cffFFD700" .. auction.currentBid .. "|r DKP  by " ..
-            DKP.ClassColorText(auction.currentBidder, bidderClass)
+            DKP.ClassColorText(auction.currentBidder, bidderClass) .. allInTag
     else
         bidText = "起拍: |cffFFD700" .. auction.startBid .. "|r DKP  |cff888888(暂无出价)|r"
     end
@@ -271,33 +306,51 @@ local function SetAuctionRowData(row, auction)
     local auctionID = auction.id
     row.bidBtn:SetScript("OnClick", function()
         local amt = tonumber(row.bidBox:GetText())
-        if amt then DKP.PlaceBid(auctionID, amt) end
+        if amt then DKP.PlaceBid(auctionID, amt, false) end
     end)
     row.bidBox:SetScript("OnEnterPressed", function(self)
         local amt = tonumber(self:GetText())
-        if amt then DKP.PlaceBid(auctionID, amt) end
+        if amt then DKP.PlaceBid(auctionID, amt, false) end
         self:ClearFocus()
     end)
 
     row.plus1:SetScript("OnClick", function()
         local base = auction.currentBid > 0 and auction.currentBid or (auction.startBid - 1)
-        DKP.PlaceBid(auctionID, base + 1)
+        DKP.PlaceBid(auctionID, base + 1, false)
     end)
     row.plus5:SetScript("OnClick", function()
         local base = auction.currentBid > 0 and auction.currentBid or (auction.startBid - 1)
-        DKP.PlaceBid(auctionID, base + 5)
+        DKP.PlaceBid(auctionID, base + 5, false)
     end)
     row.allIn:SetScript("OnClick", function()
         local myPlayer = DKP.GetPlayerByCharacter(DKP.playerName) or DKP.playerName
         local available = DKP.GetAvailableDKP(myPlayer)
-        -- 加回当前拍卖中自己的出价
         if auction.currentBidderPlayer == myPlayer then
             available = available + auction.currentBid
         end
         if available > 0 then
-            DKP.PlaceBid(auctionID, available)
+            DKP.PlaceBid(auctionID, available, true)
         end
     end)
+
+    -- 提前结束按钮（仅officer, 有出价时启用）
+    if DKP.IsOfficer() then
+        row.earlyEndBtn:Show()
+        if auction.currentBid > 0 then
+            row.earlyEndBtn:Enable()
+            row.earlyEndBtn:SetScript("OnClick", function()
+                local popup = StaticPopup_Show("YTHT_DKP_EARLY_END_CONFIRM")
+                if popup then
+                    popup.data = { auctionID = auctionID }
+                    popup:SetFrameStrata("FULLSCREEN_DIALOG")
+                end
+            end)
+        else
+            row.earlyEndBtn:Disable()
+        end
+    else
+        row.earlyEndBtn:Hide()
+    end
 
     -- 取消按钮（仅管理员）
     if DKP.IsOfficer() then
@@ -381,7 +434,6 @@ function DKP.RefreshAuctionUI()
     end
 
     if #sorted == 0 then
-        -- 无活跃拍卖时自动隐藏
         auctionFrame:Hide()
         return
     end
@@ -416,7 +468,14 @@ function DKP.UpdateAuctionTimers()
             UpdateRowTimer(row)
             -- 实时更新出价信息
             local auction = row.auctionData
-            if auction.currentBid > 0 and auction.currentBidder then
+            if auction.tiedBidders and #auction.tiedBidders >= 2 then
+                local names = {}
+                for _, tb in ipairs(auction.tiedBidders) do
+                    table.insert(names, tb.name)
+                end
+                row.bidInfo:SetText("|cffFF4444梭哈平局!|r " .. table.concat(names, " vs ") ..
+                    " @ |cffFFD700" .. auction.currentBid .. "|r DKP")
+            elseif auction.currentBid > 0 and auction.currentBidder then
                 local bidderClass = "WARRIOR"
                 if auction.currentBidderPlayer then
                     local pData = DKP.db.players[auction.currentBidderPlayer]
@@ -429,8 +488,9 @@ function DKP.UpdateAuctionTimers()
                         end
                     end
                 end
+                local allInTag = auction.currentBidIsAllIn and " |cffFF8800[梭哈]|r" or ""
                 row.bidInfo:SetText("当前: |cffFFD700" .. auction.currentBid .. "|r DKP  by " ..
-                    DKP.ClassColorText(auction.currentBidder, bidderClass))
+                    DKP.ClassColorText(auction.currentBidder, bidderClass) .. allInTag)
             end
         end
     end
