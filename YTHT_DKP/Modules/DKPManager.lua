@@ -1356,7 +1356,7 @@ local settingsDialog
 
 local function ShowSettingsDialog()
     if not settingsDialog then
-        local d = CreateDialogFrame("YTHTDKPSettingsDialog", 400, 400, "管理设置")
+        local d = CreateDialogFrame("YTHTDKPSettingsDialog", 400, 460, "管理设置")
 
         local y = -40
         local function AddOption(label, key, suffix)
