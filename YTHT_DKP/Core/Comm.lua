@@ -95,7 +95,7 @@ local function SerializeOptions()
     local parts = {}
     local keys = { "gatherPoints", "dismissPoints", "bossKillPoints", "auctionDuration",
         "minBidIncrement", "auctionExtendTime", "defaultStartingBid", "enableBossKillBonus",
-        "progressionBonusPoints", "wipeBonus", "wipeBonusMax" }
+        "progressionBonusPoints", "wipeBonus", "wipeBonusMax", "minItemQuality" }
     for _, k in ipairs(keys) do
         local v = opts[k]
         if v ~= nil then

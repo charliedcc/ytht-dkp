@@ -520,16 +520,26 @@ function DKP.RefreshTableUI()
     local f = DKP.MainFrame
     if not f or not f:IsShown() then return end
 
-    local sheetName = DKP.db.currentSheet
-    if not sheetName then
+    -- 收集所有 sheets
+    local hasAnySheet = false
+    if DKP.db.sheets then
+        for _ in pairs(DKP.db.sheets) do hasAnySheet = true; break end
+    end
+
+    if not hasAnySheet then
         f.instanceText:SetText("(无副本数据)")
+        -- 清除旧区域
+        for _, bossFrame in ipairs(f.bossFrames) do
+            bossFrame:Hide()
+            for _, row in ipairs(bossFrame.itemRows) do row:Hide() end
+        end
+        if f.instanceHeaders then
+            for _, h in ipairs(f.instanceHeaders) do h:Hide() end
+        end
         return
     end
 
-    local sheet = DKP.db.sheets[sheetName]
-    if not sheet then return end
-
-    f.instanceText:SetText(sheetName)
+    f.instanceText:SetText(DKP.db.currentSheet or "")
 
     local scrollChild = f.scrollChild
     -- 清除旧的Boss区域
@@ -539,83 +549,119 @@ function DKP.RefreshTableUI()
             row:Hide()
         end
     end
+    if not f.instanceHeaders then f.instanceHeaders = {} end
+    for _, h in ipairs(f.instanceHeaders) do h:Hide() end
 
     local yOffset = 0
     local bossFrameIndex = 0
+    local instanceHeaderIndex = 0
 
-    local bosses = sheet.bosses or {}
-    for bossIdx = 1, #bosses do
-        local bossData = bosses[bossIdx]
-        bossFrameIndex = bossFrameIndex + 1
-
-        -- 复用或创建Boss区域
-        local bossSection = f.bossFrames[bossFrameIndex]
-        if not bossSection then
-            bossSection = CreateBossSection(scrollChild, bossIdx, bossData.name, yOffset)
-            f.bossFrames[bossFrameIndex] = bossSection
-        else
-            bossSection:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
-            bossSection.bossLabel:SetText(bossData.name)
-            bossSection:Show()
+    -- 遍历所有 sheets（当前副本优先显示）
+    local sheetOrder = {}
+    if DKP.db.currentSheet and DKP.db.sheets[DKP.db.currentSheet] then
+        table.insert(sheetOrder, DKP.db.currentSheet)
+    end
+    for name in pairs(DKP.db.sheets) do
+        if name ~= DKP.db.currentSheet then
+            table.insert(sheetOrder, name)
         end
-
-        -- 更新Boss序号
-        bossSection:GetChildren()  -- 确保子元素存在
-
-        -- 击杀状态
-        if bossData.killed then
-            bossSection.killStatus:SetText("已击杀")
-            bossSection.killStatus:SetTextColor(0, 1, 0)
-        else
-            bossSection.killStatus:SetText("")
-        end
-
-        yOffset = yOffset - BOSS_HEADER_HEIGHT - ROW_SPACING
-
-        -- 装备行
-        local items = bossData.items or {}
-        if #items == 0 then
-            -- 没有装备，显示空行
-            local emptyRow = bossSection.itemRows[1]
-            if not emptyRow then
-                emptyRow = CreateItemRow(bossSection, 1, -BOSS_HEADER_HEIGHT)
-                bossSection.itemRows[1] = emptyRow
-            end
-            emptyRow.icon:SetTexture(nil)
-            emptyRow.itemText:SetText("|cff555555(暂无掉落记录)|r")
-            emptyRow.itemText:SetTextColor(0.33, 0.33, 0.33)
-            emptyRow.winnerText:SetText("")
-            emptyRow.dkpText:SetText("")
-            emptyRow.itemLink = nil
-            emptyRow:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
-            emptyRow:SetWidth(scrollChild:GetWidth())
-            emptyRow:Show()
-            yOffset = yOffset - ITEM_ROW_HEIGHT - ROW_SPACING
-        else
-            for itemIdx, itemData in ipairs(items) do
-                local itemRow = bossSection.itemRows[itemIdx]
-                if not itemRow then
-                    itemRow = CreateItemRow(bossSection, itemIdx,
-                        -BOSS_HEADER_HEIGHT - (itemIdx - 1) * (ITEM_ROW_HEIGHT + ROW_SPACING))
-                    bossSection.itemRows[itemIdx] = itemRow
-                end
-                -- 重新定位到scrollChild坐标
-                itemRow:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
-                itemRow:SetWidth(scrollChild:GetWidth())
-                itemRow.bossData = bossData
-                SetItemRowData(itemRow, itemData)
-                yOffset = yOffset - ITEM_ROW_HEIGHT - ROW_SPACING
-            end
-            -- 隐藏多余的行
-            for hideIdx = #items + 1, #bossSection.itemRows do
-                bossSection.itemRows[hideIdx]:Hide()
-            end
-        end
-
-        yOffset = yOffset - BOSS_SPACING
     end
 
-    -- 更新scrollChild高度
+    for _, sheetName in ipairs(sheetOrder) do
+        local sheet = DKP.db.sheets[sheetName]
+        if not sheet then break end
+
+        local bosses = sheet.bosses or {}
+        if #bosses > 0 then
+            -- 副本名称标题（含难度）
+            instanceHeaderIndex = instanceHeaderIndex + 1
+            local instHeader = f.instanceHeaders[instanceHeaderIndex]
+            if not instHeader then
+                instHeader = CreateFrame("Frame", nil, scrollChild)
+                instHeader:SetHeight(20)
+                local bg = instHeader:CreateTexture(nil, "BACKGROUND")
+                bg:SetAllPoints()
+                bg:SetColorTexture(0.15, 0.12, 0.05, 0.9)
+                instHeader.bg = bg
+                local text = instHeader:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                text:SetPoint("LEFT", 8, 0)
+                text:SetTextColor(0.9, 0.7, 0.2)
+                instHeader.text = text
+                f.instanceHeaders[instanceHeaderIndex] = instHeader
+            end
+            instHeader:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
+            instHeader:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
+            instHeader.text:SetText(sheetName)
+            instHeader:Show()
+            yOffset = yOffset - 22
+
+            for bossIdx = 1, #bosses do
+                local bossData = bosses[bossIdx]
+                bossFrameIndex = bossFrameIndex + 1
+
+                local bossSection = f.bossFrames[bossFrameIndex]
+                if not bossSection then
+                    bossSection = CreateBossSection(scrollChild, bossIdx, bossData.name, yOffset)
+                    f.bossFrames[bossFrameIndex] = bossSection
+                else
+                    bossSection:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
+                    bossSection.bossLabel:SetText(bossData.name)
+                    bossSection:Show()
+                end
+
+                -- 击杀状态
+                if bossData.killed then
+                    bossSection.killStatus:SetText("已击杀")
+                    bossSection.killStatus:SetTextColor(0, 1, 0)
+                else
+                    bossSection.killStatus:SetText("")
+                end
+
+                yOffset = yOffset - BOSS_HEADER_HEIGHT - ROW_SPACING
+
+                -- 装备行
+                local items = bossData.items or {}
+                if #items == 0 then
+                    local emptyRow = bossSection.itemRows[1]
+                    if not emptyRow then
+                        emptyRow = CreateItemRow(bossSection, 1, -BOSS_HEADER_HEIGHT)
+                        bossSection.itemRows[1] = emptyRow
+                    end
+                    emptyRow.icon:SetTexture(nil)
+                    emptyRow.itemText:SetText("|cff555555(暂无掉落记录)|r")
+                    emptyRow.itemText:SetTextColor(0.33, 0.33, 0.33)
+                    emptyRow.winnerText:SetText("")
+                    emptyRow.dkpText:SetText("")
+                    emptyRow.itemLink = nil
+                    if emptyRow.delItemBtn then emptyRow.delItemBtn:Hide() end
+                    emptyRow:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
+                    emptyRow:SetWidth(scrollChild:GetWidth())
+                    emptyRow:Show()
+                    yOffset = yOffset - ITEM_ROW_HEIGHT - ROW_SPACING
+                else
+                    for itemIdx, itemData in ipairs(items) do
+                        local itemRow = bossSection.itemRows[itemIdx]
+                        if not itemRow then
+                            itemRow = CreateItemRow(bossSection, itemIdx,
+                                -BOSS_HEADER_HEIGHT - (itemIdx - 1) * (ITEM_ROW_HEIGHT + ROW_SPACING))
+                            bossSection.itemRows[itemIdx] = itemRow
+                        end
+                        itemRow:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
+                        itemRow:SetWidth(scrollChild:GetWidth())
+                        itemRow.bossData = bossData
+                        SetItemRowData(itemRow, itemData)
+                        yOffset = yOffset - ITEM_ROW_HEIGHT - ROW_SPACING
+                    end
+                    for hideIdx = #items + 1, #bossSection.itemRows do
+                        bossSection.itemRows[hideIdx]:Hide()
+                    end
+                end
+
+                yOffset = yOffset - BOSS_SPACING
+            end
+        end
+    end
+
     scrollChild:SetHeight(math.abs(yOffset) + 20)
 end
 
@@ -997,6 +1043,18 @@ function DKP.ShowActivityHistory()
             infoText:SetTextColor(0.6, 0.6, 0.6)
             row.infoText = infoText
 
+            local viewBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            viewBtn:SetSize(40, 20)
+            viewBtn:SetPoint("TOPRIGHT", -92, -14)
+            viewBtn:SetText("查看")
+            row.viewBtn = viewBtn
+
+            local restoreBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            restoreBtn:SetSize(40, 20)
+            restoreBtn:SetPoint("TOPRIGHT", -48, -14)
+            restoreBtn:SetText("恢复")
+            row.restoreBtn = restoreBtn
+
             local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
             delBtn:SetSize(40, 20)
             delBtn:SetPoint("TOPRIGHT", -4, -14)
@@ -1012,13 +1070,88 @@ function DKP.ShowActivityHistory()
         row.nameText:SetText(act.name or "未命名活动")
         local logCount = act.log and #act.log or 0
         local histCount = act.auctionHistory and #act.auctionHistory or 0
+        local sheetCount = 0
+        if act.sheets then for _ in pairs(act.sheets) do sheetCount = sheetCount + 1 end end
         local timeStr = date("%Y-%m-%d %H:%M", act.endTime or 0)
-        row.infoText:SetText(timeStr .. "  |  记录: " .. logCount .. "  拍卖: " .. histCount)
+        row.infoText:SetText(timeStr .. "  |  记录:" .. logCount .. "  拍卖:" .. histCount .. "  副本:" .. sheetCount)
+
+        -- 查看：临时加载归档数据到主界面查看
+        row.viewBtn:SetScript("OnClick", function()
+            -- 临时替换当前数据用于查看
+            DKP._viewingActivity = act
+            DKP._savedLog = DKP.db.log
+            DKP._savedHistory = DKP.db.auctionHistory
+            DKP._savedSheets = DKP.db.sheets
+            DKP._savedCurrentSheet = DKP.db.currentSheet
+
+            DKP.db.log = act.log or {}
+            DKP.db.auctionHistory = act.auctionHistory or {}
+            DKP.db.sheets = act.sheets or {}
+            DKP.db.currentSheet = act.currentSheet
+
+            d:Hide()
+            DKP.MainFrame.instanceText:SetText("|cffFF8800[查看归档] " .. (act.name or "") .. "|r")
+
+            -- 显示返回按钮
+            if not DKP.MainFrame.returnBtn then
+                local btn = CreateFrame("Button", nil, DKP.MainFrame, "UIPanelButtonTemplate")
+                btn:SetSize(80, 20)
+                btn:SetPoint("RIGHT", DKP.MainFrame.activityBtn, "LEFT", -4, 0)
+                btn:SetText("返回当前")
+                btn:SetScript("OnClick", function()
+                    -- 恢复原始数据
+                    if DKP._savedLog then
+                        DKP.db.log = DKP._savedLog
+                        DKP.db.auctionHistory = DKP._savedHistory
+                        DKP.db.sheets = DKP._savedSheets
+                        DKP.db.currentSheet = DKP._savedCurrentSheet
+                        DKP._savedLog = nil
+                        DKP._savedHistory = nil
+                        DKP._savedSheets = nil
+                        DKP._savedCurrentSheet = nil
+                        DKP._viewingActivity = nil
+                    end
+                    btn:Hide()
+                    DKP.RefreshTableUI()
+                    if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+                end)
+                DKP.MainFrame.returnBtn = btn
+            end
+            DKP.MainFrame.returnBtn:Show()
+
+            DKP.RefreshTableUI()
+            if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+            DKP.SwitchTab("loot")
+        end)
+
+        -- 恢复：将归档数据恢复为当前工作数据
+        row.restoreBtn:SetScript("OnClick", function()
+            StaticPopupDialogs["YTHT_DKP_RESTORE_ACTIVITY"] = {
+                text = "恢复此活动将覆盖当前的记录和拍卖表，确定吗？",
+                button1 = "确定",
+                button2 = "取消",
+                OnAccept = function()
+                    DKP.db.log = act.log or {}
+                    DKP.db.auctionHistory = act.auctionHistory or {}
+                    DKP.db.sheets = act.sheets or {}
+                    DKP.db.currentSheet = act.currentSheet
+                    DKP.hasUnsavedChanges = true
+                    DKP.Print("已恢复活动: " .. (act.name or ""))
+                    d:Hide()
+                    DKP.RefreshTableUI()
+                    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                    if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+                end,
+                timeout = 0, whileDead = true, hideOnEscape = true,
+            }
+            local popup = StaticPopup_Show("YTHT_DKP_RESTORE_ACTIVITY")
+            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+        end)
 
         row.delBtn:SetScript("OnClick", function()
             table.remove(DKP.db.activities, i)
             DKP.hasUnsavedChanges = true
-            DKP.ShowActivityHistory()  -- 刷新
+            DKP.ShowActivityHistory()
         end)
 
         row:Show()

@@ -60,10 +60,9 @@ end
 ----------------------------------------------------------------------
 -- 获取物品品质过滤（只记录蓝色及以上品质的装备）
 ----------------------------------------------------------------------
-local MIN_QUALITY = 3  -- Rare (蓝色)
-
 local function ShouldTrackItem(quality)
-    return quality and quality >= MIN_QUALITY
+    local minQ = (DKP.db and DKP.db.options and DKP.db.options.minItemQuality) or 2
+    return quality and quality >= minQ
 end
 
 ----------------------------------------------------------------------

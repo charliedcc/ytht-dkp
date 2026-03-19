@@ -47,6 +47,8 @@ local defaults = {
         auctionDuration = 300,
         minBidIncrement = 1,
         auctionExtendTime = 10,
+        -- 装备品质过滤: 2=绿色及以上, 3=蓝色及以上, 4=紫色及以上
+        minItemQuality = 2,
     },
     -- DKP 玩家数据
     players = {},

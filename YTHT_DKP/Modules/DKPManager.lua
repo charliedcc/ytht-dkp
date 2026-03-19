@@ -1396,6 +1396,7 @@ local function ShowSettingsDialog()
         d.durationBox = AddOption("拍卖时长", "auctionDuration", "秒")
         d.minBidBox = AddOption("最小加价", "minBidIncrement", "DKP")
         d.extendBox = AddOption("延时时间", "auctionExtendTime", "秒")
+        d.qualityBox = AddOption("最低品质", "minItemQuality", "(2绿 3蓝 4紫)")
 
         -- 难度起拍价
         local diffLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1523,6 +1524,7 @@ local function ShowSettingsDialog()
     d.durationBox:SetText(tostring(opts.auctionDuration or 300))
     d.minBidBox:SetText(tostring(opts.minBidIncrement or 1))
     d.extendBox:SetText(tostring(opts.auctionExtendTime or 10))
+    d.qualityBox:SetText(tostring(opts.minItemQuality or 2))
 
     local bbd = opts.defaultBidByDifficulty or {}
     d.diffNormalBox:SetText(tostring(bbd[14] or 1))
@@ -1608,6 +1610,8 @@ local function ShowSettingsDialog()
         opts.auctionDuration = tonumber(d.durationBox:GetText()) or opts.auctionDuration
         opts.minBidIncrement = tonumber(d.minBidBox:GetText()) or opts.minBidIncrement
         opts.auctionExtendTime = tonumber(d.extendBox:GetText()) or opts.auctionExtendTime
+        local qVal = tonumber(d.qualityBox:GetText())
+        if qVal and qVal >= 0 and qVal <= 5 then opts.minItemQuality = qVal end
         if not opts.defaultBidByDifficulty then opts.defaultBidByDifficulty = {} end
         opts.defaultBidByDifficulty[14] = tonumber(d.diffNormalBox:GetText()) or 1
         opts.defaultBidByDifficulty[15] = tonumber(d.diffHeroicBox:GetText()) or 3
