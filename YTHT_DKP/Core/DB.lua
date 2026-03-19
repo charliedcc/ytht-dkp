@@ -77,6 +77,8 @@ local defaults = {
     sheets = {},
     -- 当前查看的副本
     currentSheet = nil,
+    -- 活动归档
+    activities = {},
     -- UI位置
     point = {},
 }

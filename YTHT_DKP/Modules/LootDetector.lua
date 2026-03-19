@@ -178,13 +178,13 @@ f:SetScript("OnEvent", function(self, event, ...)
                         end
 
                         local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
-                        local cnt = 0
+                        local names = {}
                         for _, m in ipairs(members) do
                             if m.playerName and m.online then
-                                DKP.AdjustDKP(m.playerName, totalPoints, reason)
-                                cnt = cnt + 1
+                                table.insert(names, m.playerName)
                             end
                         end
+                        local cnt = DKP.BulkAdjustDKPBatch and DKP.BulkAdjustDKPBatch(names, totalPoints, reason) or 0
                         if cnt > 0 then
                             local msg = encounterName .. " 击杀! " .. cnt .. " 名玩家 +" .. totalPoints .. " DKP"
                             if bonusPoints > 0 then

@@ -89,6 +89,29 @@ local function CreateMainFrame()
     instanceText:SetTextColor(0.8, 0.8, 0.8)
     f.instanceText = instanceText
 
+    -- 活动管理按钮（主界面顶部，所有tab可见）
+    local archiveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    archiveBtn:SetSize(72, 20)
+    archiveBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -30, -6)
+    archiveBtn:SetText("结束归档")
+    archiveBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer or not DKP.IsOfficer() then
+            DKP.Print("只有管理员可以归档活动")
+            return
+        end
+        DKP.ShowArchiveDialog()
+    end)
+    f.archiveBtn = archiveBtn
+
+    local activityBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    activityBtn:SetSize(72, 20)
+    activityBtn:SetPoint("RIGHT", archiveBtn, "LEFT", -4, 0)
+    activityBtn:SetText("历史活动")
+    activityBtn:SetScript("OnClick", function()
+        DKP.ShowActivityHistory()
+    end)
+    f.activityBtn = activityBtn
+
     -- 关闭按钮
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
@@ -757,6 +780,256 @@ function DKP.SwitchTab(tabKey)
 end
 
 ----------------------------------------------------------------------
+-- 活动归档
+----------------------------------------------------------------------
+function DKP.ArchiveActivity(activityName)
+    if not DKP.db then return end
+    if not DKP.db.activities then DKP.db.activities = {} end
+
+    local activity = {
+        name = activityName or date("%m-%d %H:%M"),
+        startTime = DKP.db.session.startTime or time(),
+        endTime = time(),
+        log = DKP.db.log or {},
+        auctionHistory = DKP.db.auctionHistory or {},
+        sheets = DKP.db.sheets or {},
+        currentSheet = DKP.db.currentSheet,
+    }
+    table.insert(DKP.db.activities, activity)
+
+    -- 清空当前工作数据（DKP值保留）
+    DKP.db.log = {}
+    DKP.db.auctionHistory = {}
+    DKP.db.sheets = {}
+    DKP.db.currentSheet = nil
+
+    -- 重置 session
+    DKP.db.session.active = false
+    DKP.db.session.gathered = false
+    wipe(DKP.db.session.bossKills)
+    if DKP.db.session.wipeCounts then wipe(DKP.db.session.wipeCounts) end
+
+    DKP.hasUnsavedChanges = true
+    DKP.Print("活动已归档: " .. activity.name)
+    DKP.Print("操作记录: " .. #activity.log .. " 条, 拍卖记录: " .. #activity.auctionHistory .. " 条")
+
+    -- 刷新所有UI
+    if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+    if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+end
+
+local archiveDialog
+function DKP.ShowArchiveDialog()
+    if not archiveDialog then
+        archiveDialog = CreateFrame("Frame", "YTHTDKPArchiveDialog", UIParent, "BackdropTemplate")
+        local d = archiveDialog
+        d:SetSize(320, 140)
+        d:SetPoint("CENTER")
+        d:SetFrameStrata("DIALOG")
+        d:SetFrameLevel(210)
+        d:SetMovable(true)
+        d:EnableMouse(true)
+        d:RegisterForDrag("LeftButton")
+        d:SetScript("OnDragStart", d.StartMoving)
+        d:SetScript("OnDragStop", d.StopMovingOrSizing)
+        d:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+        d:Hide()
+
+        local title = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("归档当前活动")
+
+        local hint = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        hint:SetPoint("TOPLEFT", 16, -35)
+        hint:SetText("归档后当前记录和拍卖表将被清空，DKP保留")
+        hint:SetTextColor(0.7, 0.7, 0.7)
+        d.hint = hint
+
+        local label = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        label:SetPoint("TOPLEFT", 16, -58)
+        label:SetText("活动名称:")
+
+        local nameBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        nameBox:SetSize(180, 20)
+        nameBox:SetPoint("LEFT", label, "RIGHT", 8, 0)
+        nameBox:SetAutoFocus(true)
+        d.nameBox = nameBox
+
+        local confirmBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        confirmBtn:SetSize(80, 24)
+        confirmBtn:SetPoint("BOTTOMLEFT", 16, 10)
+        confirmBtn:SetText("确定归档")
+        confirmBtn:SetScript("OnClick", function()
+            local name = d.nameBox:GetText():match("^%s*(.-)%s*$")
+            if not name or name == "" then name = date("%m-%d %H:%M") end
+            DKP.ArchiveActivity(name)
+            d:Hide()
+        end)
+
+        local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        cancelBtn:SetSize(80, 24)
+        cancelBtn:SetPoint("BOTTOMRIGHT", -16, 10)
+        cancelBtn:SetText("取消")
+        cancelBtn:SetScript("OnClick", function() d:Hide() end)
+
+        nameBox:SetScript("OnEnterPressed", function()
+            confirmBtn:Click()
+        end)
+        nameBox:SetScript("OnEscapePressed", function() d:Hide() end)
+    end
+
+    -- 默认名称: 日期时间
+    archiveDialog.nameBox:SetText(date("%m-%d %H:%M") .. " 开荒")
+
+    -- 显示当前数据量
+    local logCount = DKP.db.log and #DKP.db.log or 0
+    local histCount = DKP.db.auctionHistory and #DKP.db.auctionHistory or 0
+    local sheetCount = 0
+    if DKP.db.sheets then
+        for _ in pairs(DKP.db.sheets) do sheetCount = sheetCount + 1 end
+    end
+    archiveDialog.hint:SetText("当前: " .. logCount .. " 条记录, " .. histCount .. " 条拍卖, " .. sheetCount .. " 个副本")
+
+    archiveDialog:Show()
+    archiveDialog.nameBox:SetFocus()
+end
+
+----------------------------------------------------------------------
+-- 历史活动查看
+----------------------------------------------------------------------
+local activityHistoryDialog
+
+function DKP.ShowActivityHistory()
+    if not activityHistoryDialog then
+        local d = CreateFrame("Frame", "YTHTDKPActivityHistoryDialog", UIParent, "BackdropTemplate")
+        d:SetSize(500, 400)
+        d:SetPoint("CENTER")
+        d:SetFrameStrata("DIALOG")
+        d:SetFrameLevel(200)
+        d:SetMovable(true)
+        d:EnableMouse(true)
+        d:RegisterForDrag("LeftButton")
+        d:SetScript("OnDragStart", d.StartMoving)
+        d:SetScript("OnDragStop", d.StopMovingOrSizing)
+        d:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+        d:Hide()
+
+        local title = d:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("历史活动")
+
+        local closeBtn = CreateFrame("Button", nil, d, "UIPanelCloseButton")
+        closeBtn:SetPoint("TOPRIGHT", -2, -2)
+
+        -- 滚动列表
+        local sf = CreateFrame("ScrollFrame", "YTHTDKPActivityScroll", d, "UIPanelScrollFrameTemplate")
+        sf:SetPoint("TOPLEFT", 12, -38)
+        sf:SetPoint("BOTTOMRIGHT", -32, 12)
+
+        local sc = CreateFrame("Frame", "YTHTDKPActivityScrollChild", sf)
+        sc:SetWidth(440)
+        sc:SetHeight(1)
+        sf:SetScrollChild(sc)
+        d.scrollChild = sc
+        d.rows = {}
+
+        activityHistoryDialog = d
+    end
+
+    local d = activityHistoryDialog
+    local sc = d.scrollChild
+    local activities = DKP.db.activities or {}
+
+    for _, row in ipairs(d.rows) do row:Hide() end
+
+    if #activities == 0 then
+        if not d.emptyText then
+            d.emptyText = sc:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            d.emptyText:SetPoint("CENTER", sc, "TOP", 0, -40)
+            d.emptyText:SetText("|cff555555暂无归档活动|r")
+        end
+        d.emptyText:Show()
+        sc:SetHeight(80)
+        d:Show()
+        return
+    end
+    if d.emptyText then d.emptyText:Hide() end
+
+    -- 倒序显示
+    local yOff = 0
+    local idx = 0
+    for i = #activities, 1, -1 do
+        local act = activities[i]
+        idx = idx + 1
+
+        local row = d.rows[idx]
+        if not row then
+            row = CreateFrame("Frame", nil, sc)
+            row:SetSize(440, 50)
+
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            row.bg = bg
+
+            local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            nameText:SetPoint("TOPLEFT", 8, -6)
+            nameText:SetWidth(300)
+            nameText:SetJustifyH("LEFT")
+            row.nameText = nameText
+
+            local infoText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            infoText:SetPoint("TOPLEFT", 8, -24)
+            infoText:SetWidth(300)
+            infoText:SetJustifyH("LEFT")
+            infoText:SetTextColor(0.6, 0.6, 0.6)
+            row.infoText = infoText
+
+            local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            delBtn:SetSize(40, 20)
+            delBtn:SetPoint("TOPRIGHT", -4, -14)
+            delBtn:SetText("删除")
+            row.delBtn = delBtn
+
+            d.rows[idx] = row
+        end
+
+        row:SetPoint("TOPLEFT", sc, "TOPLEFT", 0, yOff)
+        row.bg:SetColorTexture((idx % 2 == 0) and 0.13 or 0.10, (idx % 2 == 0) and 0.13 or 0.10, (idx % 2 == 0) and 0.18 or 0.15, 0.7)
+
+        row.nameText:SetText(act.name or "未命名活动")
+        local logCount = act.log and #act.log or 0
+        local histCount = act.auctionHistory and #act.auctionHistory or 0
+        local timeStr = date("%Y-%m-%d %H:%M", act.endTime or 0)
+        row.infoText:SetText(timeStr .. "  |  记录: " .. logCount .. "  拍卖: " .. histCount)
+
+        row.delBtn:SetScript("OnClick", function()
+            table.remove(DKP.db.activities, i)
+            DKP.hasUnsavedChanges = true
+            DKP.ShowActivityHistory()  -- 刷新
+        end)
+
+        row:Show()
+        yOff = yOff - 52
+    end
+
+    sc:SetHeight(math.abs(yOff) + 10)
+    d:Show()
+end
+
+----------------------------------------------------------------------
 -- 初始化
 ----------------------------------------------------------------------
 function DKP.OnInitialized()
@@ -838,15 +1111,15 @@ function DKP.OnInitialized()
             end
             DKP.db.session.active = true
             DKP.db.session.gathered = true
-            local points = DKP.db.options.gatherPoints or 10
+            local points = DKP.db.options.gatherPoints or 3
             local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
-            local count = 0
+            local names = {}
             for _, m in ipairs(members) do
                 if m.playerName and m.online then
-                    DKP.AdjustDKP(m.playerName, points, "集合")
-                    count = count + 1
+                    table.insert(names, m.playerName)
                 end
             end
+            local count = DKP.BulkAdjustDKPBatch(names, points, "集合")
             DKP.Print("集合加分: " .. count .. " 名玩家 +" .. points .. " DKP")
             local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
             if channel then
@@ -859,15 +1132,15 @@ function DKP.OnInitialized()
                 DKP.Print("只有团长或助理可以执行解散加分")
                 return
             end
-            local points = DKP.db.options.dismissPoints or 10
+            local points = DKP.db.options.dismissPoints or 2
             local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
-            local count = 0
+            local names = {}
             for _, m in ipairs(members) do
                 if m.playerName and m.online then
-                    DKP.AdjustDKP(m.playerName, points, "解散")
-                    count = count + 1
+                    table.insert(names, m.playerName)
                 end
             end
+            local count = DKP.BulkAdjustDKPBatch(names, points, "解散")
             DKP.Print("解散加分: " .. count .. " 名玩家 +" .. points .. " DKP")
             DKP.db.session.active = false
             DKP.db.session.gathered = false

@@ -493,9 +493,157 @@ function DKP.BroadcastFullSync()
             SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, channel)
         end
     end
+
+    -- 广播 sheets (拍卖表)
+    local sheetsData = DKP.SerializeSheets()
+    if sheetsData ~= "" then
+        local channel = GetChannel()
+        if channel then
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, channel)
+        end
+    end
+end
+
+----------------------------------------------------------------------
+-- 拍卖表序列化/反序列化
+----------------------------------------------------------------------
+function DKP.SerializeSheets()
+    if not DKP.db or not DKP.db.sheets then return "" end
+    local parts = {}
+    for sheetName, sheet in pairs(DKP.db.sheets) do
+        local bossParts = {}
+        for _, boss in ipairs(sheet.bosses or {}) do
+            local itemParts = {}
+            for _, item in ipairs(boss.items or {}) do
+                -- link|winner|winnerClass|dkp|rollID
+                table.insert(itemParts, table.concat({
+                    item.link or "",
+                    item.winner or "",
+                    item.winnerClass or "",
+                    tostring(item.dkp or 0),
+                    tostring(item.rollID or 0),
+                }, "|"))
+            end
+            -- bossName~encounterID~killed~item1^item2^item3
+            table.insert(bossParts, table.concat({
+                boss.name or "",
+                tostring(boss.encounterID or 0),
+                boss.killed and "1" or "0",
+                table.concat(itemParts, "^"),
+            }, "~"))
+        end
+        -- sheetName=boss1@@boss2@@boss3
+        table.insert(parts, sheetName .. "=" .. table.concat(bossParts, "@@"))
+    end
+    return table.concat(parts, "\n")
+end
+
+function DKP.DeserializeSheets(text)
+    local result = {}
+    for line in text:gmatch("[^\n]+") do
+        local sheetName, bossesStr = line:match("^(.-)=(.*)$")
+        if sheetName then
+            local sheet = { bosses = {} }
+            if bossesStr ~= "" then
+                for bossStr in bossesStr:gmatch("[^@@]+") do
+                    local bParts = { strsplit("~", bossStr) }
+                    local boss = {
+                        name = bParts[1] or "",
+                        encounterID = tonumber(bParts[2]) or 0,
+                        killed = bParts[3] == "1",
+                        items = {},
+                    }
+                    local itemsStr = bParts[4] or ""
+                    if itemsStr ~= "" then
+                        for itemStr in itemsStr:gmatch("[^%^]+") do
+                            local iParts = { strsplit("|", itemStr) }
+                            table.insert(boss.items, {
+                                link = iParts[1] or "",
+                                winner = iParts[2] or "",
+                                winnerClass = iParts[3] or "",
+                                dkp = tonumber(iParts[4]) or 0,
+                                rollID = tonumber(iParts[5]) or 0,
+                            })
+                        end
+                    end
+                    table.insert(sheet.bosses, boss)
+                end
+            end
+            result[sheetName] = sheet
+        end
+    end
+    return result
 end
 
 local pendingOptSync = {}
+local pendingSheetsSync = {}
+
+----------------------------------------------------------------------
+-- Sheets 同步接收（管理员需确认）
+----------------------------------------------------------------------
+local function HandleSheetsChunk(parts, sender)
+    local chunkIndex = tonumber(parts[2])
+    local totalChunks = tonumber(parts[3])
+    local chunkData = parts[4] or ""
+    if not chunkIndex or not totalChunks then return end
+
+    local sKey = sender .. "_sheets"
+    if not pendingSheetsSync[sKey] then
+        pendingSheetsSync[sKey] = { chunks = {}, expected = totalChunks }
+    end
+    local sync = pendingSheetsSync[sKey]
+    sync.chunks[chunkIndex] = chunkData
+
+    local received = 0
+    for _ in pairs(sync.chunks) do received = received + 1 end
+
+    if received >= sync.expected then
+        local fullData = {}
+        for i = 1, sync.expected do
+            table.insert(fullData, sync.chunks[i] or "")
+        end
+        local text = table.concat(fullData)
+        pendingSheetsSync[sKey] = nil
+
+        local newSheets = DKP.DeserializeSheets(text)
+        if not next(newSheets) then return end
+
+        local senderShort = sender:match("^([^%-]+)") or sender
+
+        -- 管理员需确认，非管理员直接接受
+        if DKP.IsOfficer() then
+            -- 存储待确认数据
+            DKP.pendingSheetsData = newSheets
+            DKP.pendingSheetsSender = senderShort
+            StaticPopupDialogs["YTHT_DKP_CONFIRM_SHEETS_SYNC"] = {
+                text = "收到来自 " .. senderShort .. " 的拍卖表同步，是否接受覆盖本地拍卖表？",
+                button1 = "接受",
+                button2 = "拒绝",
+                OnAccept = function()
+                    if DKP.pendingSheetsData then
+                        DKP.db.sheets = DKP.pendingSheetsData
+                        DKP.Print("已接受拍卖表同步 (来自 " .. (DKP.pendingSheetsSender or "?") .. ")")
+                        if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+                        DKP.pendingSheetsData = nil
+                        DKP.pendingSheetsSender = nil
+                    end
+                end,
+                OnCancel = function()
+                    DKP.Print("已拒绝拍卖表同步")
+                    DKP.pendingSheetsData = nil
+                    DKP.pendingSheetsSender = nil
+                end,
+                timeout = 0, whileDead = true, hideOnEscape = true,
+            }
+            local popup = StaticPopup_Show("YTHT_DKP_CONFIRM_SHEETS_SYNC")
+            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+        else
+            DKP.db.sheets = newSheets
+            DKP.Print("已同步拍卖表 (来自 " .. senderShort .. ")")
+            if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+        end
+    end
+end
 
 local function HandleOptionsChunk(parts, sender)
     local chunkIndex = tonumber(parts[2])
@@ -559,6 +707,8 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
             HandleSyncChunk(parts, sender)
         elseif msgType == "SYNC_OPTIONS" then
             HandleOptionsChunk(parts, sender)
+        elseif msgType == "SYNC_SHEETS" then
+            HandleSheetsChunk(parts, sender)
         elseif msgType == "ADMIN_SYNC" then
             HandleAdminSync(parts, sender)
         elseif msgType == "HISTORY_ENTRY" then

@@ -126,6 +126,21 @@ function DKP.RemoveCharacter(playerName, charName)
     return false
 end
 
+-- 调整DKP（不写日志，供批量操作内部使用）
+local function AdjustDKPRaw(playerName, amount)
+    local player = DKP.db and DKP.db.players[playerName]
+    if not player then return false end
+    player.dkp = (player.dkp or 0) + amount
+    player.lastUpdated = time()
+    DKP.hasUnsavedChanges = true
+    -- 广播DKP变动
+    if DKP.BroadcastDKPChange then
+        DKP.BroadcastDKPChange(playerName, player.dkp, amount, "")
+    end
+    return true
+end
+
+-- 单人DKP调整（写单条日志，用于拍卖扣分、手动编辑等单人操作）
 function DKP.AdjustDKP(playerName, amount, reason)
     local player = DKP.db and DKP.db.players[playerName]
     if not player then return false end
@@ -145,6 +160,53 @@ function DKP.AdjustDKP(playerName, amount, reason)
         DKP.BroadcastDKPChange(playerName, player.dkp, amount, reason or "")
     end
     return true
+end
+
+-- 批量DKP调整（统一amount，写一条批量日志）
+function DKP.BulkAdjustDKPBatch(playerNames, amount, reason)
+    if not DKP.db or not playerNames or #playerNames == 0 then return 0 end
+    local affected = {}
+    for _, name in ipairs(playerNames) do
+        if AdjustDKPRaw(name, amount) then
+            table.insert(affected, name)
+        end
+    end
+    if #affected > 0 then
+        table.insert(DKP.db.log, {
+            type = amount >= 0 and "award" or "deduct",
+            players = affected,
+            amount = amount,
+            reason = reason or "",
+            timestamp = time(),
+            officer = DKP.playerName or "Unknown",
+        })
+    end
+    return #affected
+end
+
+-- 批量DKP调整（每人不同额度，如衰减，写一条明细日志）
+function DKP.BulkAdjustDKPDetailed(details, reason)
+    -- details = { {name="张三", amount=-10}, {name="李四", amount=-2}, ... }
+    if not DKP.db or not details or #details == 0 then return 0 end
+    local affected = {}
+    local totalAmount = 0
+    for _, d in ipairs(details) do
+        if AdjustDKPRaw(d.name, d.amount) then
+            table.insert(affected, { name = d.name, amount = d.amount })
+            totalAmount = totalAmount + d.amount
+        end
+    end
+    if #affected > 0 then
+        table.insert(DKP.db.log, {
+            type = "decay",
+            players = affected,  -- 明细数组 {name, amount}
+            amount = totalAmount,
+            reason = reason or "",
+            timestamp = time(),
+            officer = DKP.playerName or "Unknown",
+        })
+    end
+    return #affected
 end
 
 function DKP.SetDKP(playerName, amount, reason)
@@ -171,12 +233,12 @@ function DKP.SetDKP(playerName, amount, reason)
 end
 
 function DKP.BulkAdjustDKP(amount, reason)
-    if not DKP.db then return 0 end
-    local count = 0
+    if not DKP.db or not DKP.db.players then return 0 end
+    local names = {}
     for playerName in pairs(DKP.db.players) do
-        DKP.AdjustDKP(playerName, amount, reason)
-        count = count + 1
+        table.insert(names, playerName)
     end
+    local count = DKP.BulkAdjustDKPBatch(names, amount, reason)
     DKP.Print("批量调整: " .. count .. " 名玩家 " .. (amount >= 0 and "+" or "") .. amount .. " DKP")
     return count
 end
@@ -1251,14 +1313,14 @@ local function ShowBulkAdjustDialog()
         decayBtn:SetScript("OnClick", function()
             local pct = tonumber(d.decayBox:GetText())
             if pct and pct > 0 and pct <= 100 then
-                local count = 0
+                local details = {}
                 for name, data in pairs(DKP.db.players) do
                     if (data.dkp or 0) > 0 then
                         local decay = math.ceil(data.dkp * pct / 100)
-                        DKP.AdjustDKP(name, -decay, "DKP衰减 " .. pct .. "%")
-                        count = count + 1
+                        table.insert(details, { name = name, amount = -decay })
                     end
                 end
+                local count = DKP.BulkAdjustDKPDetailed(details, "DKP衰减 " .. pct .. "%")
                 DKP.Print("DKP衰减 " .. pct .. "%: " .. count .. " 名玩家受影响")
                 DKP.RefreshDKPUI()
                 d:Hide()
@@ -1660,15 +1722,31 @@ function DKP.ShowExportDialog()
         local function ExportLog()
             local lines = {}
             table.insert(lines, "# 操作记录导出 - " .. date("%Y-%m-%d %H:%M:%S"))
-            table.insert(lines, "# 格式: 时间戳,类型,玩家,数额,原因,操作员")
+            table.insert(lines, "# 格式: 时间戳,类型,玩家(批量用;分隔),数额,原因,操作员")
             for _, entry in ipairs(DKP.db.log or {}) do
+                local playerField
+                if entry.players then
+                    if type(entry.players[1]) == "table" then
+                        -- 衰减明细: name:amount;name:amount
+                        local parts = {}
+                        for _, d in ipairs(entry.players) do
+                            table.insert(parts, d.name .. ":" .. tostring(d.amount))
+                        end
+                        playerField = table.concat(parts, ";")
+                    else
+                        playerField = table.concat(entry.players, ";")
+                    end
+                else
+                    playerField = entry.player or ""
+                end
                 table.insert(lines, table.concat({
                     tostring(entry.timestamp or 0),
                     entry.type or "",
-                    entry.player or "",
+                    playerField,
                     tostring(entry.amount or 0),
-                    (entry.reason or ""):gsub(",", ";"),  -- 逗号转义
+                    (entry.reason or ""):gsub(",", ";"),
                     entry.officer or "",
+                    entry.reversed and "reversed" or "",
                 }, ","))
             end
             return table.concat(lines, "\n")
@@ -1780,27 +1858,79 @@ function DKP.ReverseLogEntry(logIndex)
         return false
     end
 
-    local reverseAmount = -entry.amount
-    local player = DKP.db.players[entry.player]
-    if player then
-        player.dkp = (player.dkp or 0) + reverseAmount
-        player.lastUpdated = time()
+    if entry.players then
+        -- 批量条目冲红
+        if entry.type == "decay" then
+            -- 衰减明细：每人退还精确金额
+            local reversePlayers = {}
+            for _, d in ipairs(entry.players) do
+                local name = type(d) == "table" and d.name or d
+                local amt = type(d) == "table" and d.amount or entry.amount
+                local player = DKP.db.players[name]
+                if player then
+                    player.dkp = (player.dkp or 0) - amt
+                    player.lastUpdated = time()
+                end
+                table.insert(reversePlayers, type(d) == "table" and { name = d.name, amount = -d.amount } or name)
+            end
+            table.insert(DKP.db.log, {
+                type = "reverse",
+                players = reversePlayers,
+                amount = -entry.amount,
+                reason = "冲红: " .. (entry.reason or ""),
+                timestamp = time(),
+                officer = DKP.playerName or "Unknown",
+                reversedIndex = logIndex,
+            })
+        else
+            -- 统一金额批量冲红
+            local reverseAmount = -entry.amount
+            local names = {}
+            for _, name in ipairs(entry.players) do
+                local player = DKP.db.players[name]
+                if player then
+                    player.dkp = (player.dkp or 0) + reverseAmount
+                    player.lastUpdated = time()
+                end
+                table.insert(names, name)
+            end
+            table.insert(DKP.db.log, {
+                type = "reverse",
+                players = names,
+                amount = reverseAmount,
+                reason = "冲红: " .. (entry.reason or ""),
+                timestamp = time(),
+                officer = DKP.playerName or "Unknown",
+                reversedIndex = logIndex,
+            })
+        end
+        entry.reversed = true
+        local count = type(entry.players[1]) == "table" and #entry.players or #entry.players
+        DKP.Print("已冲红批量操作: " .. count .. " 人 (" .. (entry.reason or "") .. ")")
+    else
+        -- 单人条目冲红（原逻辑）
+        local reverseAmount = -entry.amount
+        local player = DKP.db.players[entry.player]
+        if player then
+            player.dkp = (player.dkp or 0) + reverseAmount
+            player.lastUpdated = time()
+        end
+
+        table.insert(DKP.db.log, {
+            type = "reverse",
+            player = entry.player,
+            amount = reverseAmount,
+            reason = "冲红: " .. (entry.reason or ""),
+            timestamp = time(),
+            officer = DKP.playerName or "Unknown",
+            reversedIndex = logIndex,
+        })
+        entry.reversed = true
+
+        DKP.Print("已冲红: " .. entry.player .. " " ..
+            (entry.amount >= 0 and "+" or "") .. entry.amount ..
+            " DKP (" .. (entry.reason or "") .. ")")
     end
-
-    table.insert(DKP.db.log, {
-        type = "reverse",
-        player = entry.player,
-        amount = reverseAmount,
-        reason = "冲红: " .. (entry.reason or ""),
-        timestamp = time(),
-        officer = DKP.playerName or "Unknown",
-        reversedIndex = logIndex,
-    })
-    entry.reversed = true
-
-    DKP.Print("已冲红: " .. entry.player .. " " ..
-        (entry.amount >= 0 and "+" or "") .. entry.amount ..
-        " DKP (" .. (entry.reason or "") .. ")")
     return true
 end
 
@@ -2245,8 +2375,39 @@ local LOG_TYPE_NAMES = {
     deduct = "|cffFF4444-扣分|r",
     set = "|cffFFD700设置|r",
     reverse = "|cffFF8800冲红|r",
+    decay = "|cffFF8800衰减|r",
     bid_win = "|cffFF4444拍卖|r",
 }
+
+-- 获取日志条目的玩家显示文本
+local function GetLogPlayerText(entry)
+    if entry.players then
+        if type(entry.players[1]) == "table" then
+            -- 衰减明细: {name, amount}
+            return #entry.players .. "人"
+        else
+            -- 统一金额批量: {"name1", "name2"}
+            return #entry.players .. "人"
+        end
+    end
+    return entry.player or "?"
+end
+
+-- 获取日志条目的玩家完整列表（用于tooltip）
+local function GetLogPlayerFullText(entry)
+    if entry.players then
+        local names = {}
+        for _, d in ipairs(entry.players) do
+            if type(d) == "table" then
+                table.insert(names, d.name .. " (" .. (d.amount >= 0 and "+" or "") .. d.amount .. ")")
+            else
+                table.insert(names, d)
+            end
+        end
+        return table.concat(names, "\n")
+    end
+    return entry.player or ""
+end
 
 local function ShowLogDialog()
     if not logDialog then
@@ -2381,8 +2542,34 @@ local function ShowLogDialog()
 
         row.timeText:SetText(FormatTimestamp(entry.timestamp))
         row.timeText:SetTextColor(0.7, 0.7, 0.7)
-        row.playerText:SetText(entry.player or "?")
-        row.playerText:SetTextColor(1, 0.82, 0)
+
+        -- 玩家列（支持批量条目）
+        local playerDisplay = GetLogPlayerText(entry)
+        row.playerText:SetText(playerDisplay)
+        if entry.players then
+            row.playerText:SetTextColor(0.5, 0.8, 1)  -- 批量条目用蓝色
+        else
+            row.playerText:SetTextColor(1, 0.82, 0)
+        end
+
+        -- 批量条目 tooltip 显示完整玩家列表
+        row:SetScript("OnEnter", function(self)
+            if entry.players then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine("影响玩家 (" .. #entry.players .. "人)", 1, 1, 1)
+                for _, d in ipairs(entry.players) do
+                    if type(d) == "table" then
+                        local c = d.amount >= 0 and GREEN_FONT_COLOR or RED_FONT_COLOR
+                        GameTooltip:AddDoubleLine(d.name, (d.amount >= 0 and "+" or "") .. d.amount, 1, 0.82, 0, c.r, c.g, c.b)
+                    else
+                        GameTooltip:AddLine(d, 1, 0.82, 0)
+                    end
+                end
+                GameTooltip:Show()
+            end
+        end)
+        row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
         row.typeText:SetText(LOG_TYPE_NAMES[entry.type] or entry.type)
 
         -- 数额颜色
@@ -2400,6 +2587,19 @@ local function ShowLogDialog()
 
         -- 冲红按钮
         local logIndex = i
+        local confirmText
+        if entry.players then
+            confirmText = "确定要冲红这条批量记录吗？\n" ..
+                #entry.players .. " 人 " ..
+                (amt >= 0 and "+" or "") .. amt .. " DKP\n" ..
+                (entry.reason or "")
+        else
+            confirmText = "确定要冲红这条记录吗？\n" ..
+                (entry.player or "") .. " " ..
+                (amt >= 0 and "+" or "") .. amt .. " DKP\n" ..
+                (entry.reason or "")
+        end
+
         if entry.reversed then
             row.reverseBtn:SetText("已冲")
             row.reverseBtn:Disable()
@@ -2411,16 +2611,13 @@ local function ShowLogDialog()
             row.reverseBtn:Enable()
             row.reverseBtn:SetScript("OnClick", function()
                 StaticPopupDialogs["YTHT_DKP_REVERSE_LOG"] = {
-                    text = "确定要冲红这条记录吗？\n" ..
-                        (entry.player or "") .. " " ..
-                        (amt >= 0 and "+" or "") .. amt .. " DKP\n" ..
-                        (entry.reason or ""),
+                    text = confirmText,
                     button1 = "确定冲红",
                     button2 = "取消",
                     OnAccept = function()
                         DKP.ReverseLogEntry(logIndex)
                         DKP.RefreshDKPUI()
-                        ShowLogDialog()  -- 刷新记录列表
+                        ShowLogDialog()
                     end,
                     timeout = 0,
                     whileDead = true,
@@ -2543,13 +2740,13 @@ function DKP.InitDKPPanel()
         DKP.db.session.gathered = true
         local points = DKP.db.options.gatherPoints or 3
         local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
-        local count = 0
+        local names = {}
         for _, m in ipairs(members) do
             if m.playerName and m.online then
-                DKP.AdjustDKP(m.playerName, points, "集合")
-                count = count + 1
+                table.insert(names, m.playerName)
             end
         end
+        local count = DKP.BulkAdjustDKPBatch(names, points, "集合")
         DKP.Print("集合加分: " .. count .. " 名玩家 +" .. points .. " DKP")
         local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
         if channel then
@@ -2566,13 +2763,13 @@ function DKP.InitDKPPanel()
         if not DKP.IsOfficer() then return end
         local points = DKP.db.options.dismissPoints or 2
         local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
-        local count = 0
+        local names = {}
         for _, m in ipairs(members) do
             if m.playerName and m.online then
-                DKP.AdjustDKP(m.playerName, points, "解散")
-                count = count + 1
+                table.insert(names, m.playerName)
             end
         end
+        local count = DKP.BulkAdjustDKPBatch(names, points, "解散")
         DKP.Print("解散加分: " .. count .. " 名玩家 +" .. points .. " DKP")
         DKP.db.session.active = false
         DKP.db.session.gathered = false
