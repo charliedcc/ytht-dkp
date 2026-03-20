@@ -1772,7 +1772,7 @@ function DKP.SerializeActivity(activity)
             entry.encounterName or "",
             entry.instanceName or "",
             bidsStr,
-        }, "\031"))
+        }, "§"))
     end
 
     -- SHEETS
@@ -1792,7 +1792,10 @@ function DKP.SerializeActivity(activity)
     end
 
     table.insert(lines, "[END]")
-    return table.concat(lines, "\n")
+    local result = table.concat(lines, "\n")
+    -- 导出用: 把 \031 控制字符替换为 § 以便 EditBox 显示
+    result = result:gsub("\031", "§")
+    return result
 end
 
 function DKP.DeserializeActivity(text)
@@ -1884,7 +1887,7 @@ function DKP.DeserializeActivity(text)
                 table.insert(activity.log, entry)
             end
         elseif currentSection == "AUCTION_HISTORY" then
-            local parts = { strsplit("\031", line) }
+            local parts = { strsplit("§", line) }
             if #parts >= 10 then
                 local bids = {}
                 if parts[14] and parts[14] ~= "" then
@@ -1920,6 +1923,8 @@ function DKP.DeserializeActivity(text)
     -- 处理最后的 SHEETS 段
     if currentSection == "SHEETS" and #sheetsText > 0 then
         local st = table.concat(sheetsText, "\n")
+        -- 还原 § → \031（DeserializeSheets 期望 \031 分隔 item 字段）
+        st = st:gsub("§", "\031")
         if DKP.DeserializeSheets then
             activity.sheets = DKP.DeserializeSheets(st)
         end
