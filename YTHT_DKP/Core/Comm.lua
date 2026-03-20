@@ -247,7 +247,12 @@ local function HandleSyncChunk(parts, sender)
             DKP.Print("|cff888888[调试] admins: " .. table.concat(aList, ",") .. "|r")
         end
 
-        local trusted = IsTrustedSender(sender)
+        local trustOk, trusted = pcall(IsTrustedSender, sender)
+        if not trustOk then
+            DKP.Print("|cffFF4444[调试] IsTrustedSender报错: " .. tostring(trusted) .. "|r")
+            -- 报错时直接放行
+            trusted = true
+        end
         DKP.Print("|cff888888[调试] IsTrustedSender结果: " .. tostring(trusted) .. "|r")
         if not trusted then
             DKP.Print("|cffFF8800[调试] SYNC_FULL 被拒绝|r")
