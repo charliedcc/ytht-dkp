@@ -3158,66 +3158,9 @@ function DKP.InitDKPPanel()
     raidBtn:SetScript("OnClick", function() ShowRaidAwardDialog() end)
     parent.raidBtn = raidBtn
 
-    local gatherBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    gatherBtn:SetSize(50, 22)
-    gatherBtn:SetPoint("LEFT", raidBtn, "RIGHT", 4, 0)
-    gatherBtn:SetText("集合")
-    gatherBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then return end
-        if DKP.db.session.gathered then
-            DKP.Print("本次活动已经执行过集合加分")
-            return
-        end
-        DKP.db.session.active = true
-        DKP.db.session.gathered = true
-        if not DKP.db.session.startTime then DKP.db.session.startTime = time() end
-        local points = DKP.db.options.gatherPoints or 3
-        local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
-        local names = {}
-        for _, m in ipairs(members) do
-            if m.playerName and m.online then
-                table.insert(names, m.playerName)
-            end
-        end
-        local count = DKP.BulkAdjustDKPBatch(names, points, "集合")
-        DKP.Print("集合加分: " .. count .. " 名玩家 +" .. points .. " DKP")
-        local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
-        if channel then
-            SendChatMessage("[YTHT-DKP] 集合加分! 全团 +" .. points .. " DKP", channel)
-        end
-        DKP.RefreshDKPUI()
-    end)
-
-    local dismissBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    dismissBtn:SetSize(50, 22)
-    dismissBtn:SetPoint("LEFT", gatherBtn, "RIGHT", 4, 0)
-    dismissBtn:SetText("解散")
-    dismissBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then return end
-        local points = DKP.db.options.dismissPoints or 2
-        local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
-        local names = {}
-        for _, m in ipairs(members) do
-            if m.playerName and m.online then
-                table.insert(names, m.playerName)
-            end
-        end
-        local count = DKP.BulkAdjustDKPBatch(names, points, "解散")
-        DKP.Print("解散加分: " .. count .. " 名玩家 +" .. points .. " DKP")
-        DKP.db.session.active = false
-        DKP.db.session.gathered = false
-        wipe(DKP.db.session.bossKills)
-        if DKP.db.session.wipeCounts then wipe(DKP.db.session.wipeCounts) end
-        local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
-        if channel then
-            SendChatMessage("[YTHT-DKP] 解散加分! 全团 +" .. points .. " DKP", channel)
-        end
-        DKP.RefreshDKPUI()
-    end)
-
     local logBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     logBtn:SetSize(72, 22)
-    logBtn:SetPoint("LEFT", dismissBtn, "RIGHT", 4, 0)
+    logBtn:SetPoint("LEFT", raidBtn, "RIGHT", 4, 0)
     logBtn:SetText("操作记录")
     logBtn:SetScript("OnClick", function() ShowLogDialog() end)
 
