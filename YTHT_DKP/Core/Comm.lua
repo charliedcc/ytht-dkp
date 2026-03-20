@@ -470,10 +470,14 @@ local function HandleTeamSync(parts, sender)
         team.admins = newAdmins
         if masterAdmin then team.masterAdmin = masterAdmin end
         team.name = teamName
-        -- 如果当前在这个团队，刷新快捷引用
+        -- 如果当前在这个团队，刷新快捷引用和UI
         if DKP.db.currentTeam == teamID then
             DKP.db.admins = team.admins
             DKP.db.masterAdmin = team.masterAdmin
+            -- 刷新标题栏团队名
+            if DKP.MainFrame and DKP.MainFrame.teamBtn and DKP.MainFrame.teamBtn.text then
+                DKP.MainFrame.teamBtn.text:SetText(teamName)
+            end
         end
         DKP.Print("已更新团队权限: " .. teamName .. " (来自 " .. senderShort .. ")")
         if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
