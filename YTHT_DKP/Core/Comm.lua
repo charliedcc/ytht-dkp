@@ -138,7 +138,7 @@ end
 ----------------------------------------------------------------------
 -- 分包发送
 ----------------------------------------------------------------------
-local CHUNK_SEND_INTERVAL = 0.2  -- 每个 chunk 间隔 200ms，避免 WoW 节流
+local CHUNK_SEND_INTERVAL = 0.4  -- 每个 chunk 间隔 400ms，避免 WoW 节流
 
 local function SendChunked(prefix, msgType, data, channel, target)
     -- 动态计算 chunk 大小，确保总消息 <= 255 字节
@@ -620,8 +620,8 @@ function DKP.BroadcastFullSync()
     -- 第4批: 掉落列表（延迟5秒）
     C_Timer.After(5, function() DKP.BroadcastSheetsData() end)
 
-    -- 第5批: 操作记录+拍卖记录（延迟12秒）
-    C_Timer.After(12, function() DKP.BroadcastActivityData() end)
+    -- 第5批: 操作记录+拍卖记录（延迟20秒，等前面 chunks 全部发完）
+    C_Timer.After(20, function() DKP.BroadcastActivityData() end)
 end
 
 ----------------------------------------------------------------------
@@ -714,16 +714,34 @@ local function HandleActivityChunk(parts, sender)
 
     local sKey = sender .. "_activity"
     if not pendingActivitySync[sKey] then
-        pendingActivitySync[sKey] = { chunks = {}, expected = totalChunks }
+        pendingActivitySync[sKey] = { chunks = {}, expected = totalChunks, lastReceived = GetTime() }
     end
     local sync = pendingActivitySync[sKey]
     sync.chunks[chunkIndex] = chunkData
+    sync.lastReceived = GetTime()
 
     local received = 0
     for _ in pairs(sync.chunks) do received = received + 1 end
 
     if totalChunks > 5 and (received % 5 == 0 or received == totalChunks) then
         DKP.Print("|cff888888[接收] 活动数据 " .. received .. "/" .. totalChunks .. "|r")
+    end
+
+    -- 超时检测：5秒内没收到新 chunk 且未收全，提示丢包
+    if received < sync.expected then
+        C_Timer.After(8, function()
+            if pendingActivitySync[sKey] and pendingActivitySync[sKey].lastReceived
+               and (GetTime() - pendingActivitySync[sKey].lastReceived) >= 7 then
+                local got = 0
+                for _ in pairs(pendingActivitySync[sKey].chunks) do got = got + 1 end
+                if got < pendingActivitySync[sKey].expected then
+                    local missing = pendingActivitySync[sKey].expected - got
+                    DKP.Print("|cffFF8800[同步] 活动数据传输中断: 收到 " .. got .. "/" ..
+                        pendingActivitySync[sKey].expected .. " (丢失 " .. missing .. " 包，请重新同步)|r")
+                    pendingActivitySync[sKey] = nil
+                end
+            end
+        end)
     end
 
     if received >= sync.expected then
