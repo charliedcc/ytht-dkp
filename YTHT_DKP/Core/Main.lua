@@ -484,6 +484,40 @@ local function SetItemRowData(row, itemData)
         else
             row.dkpText:SetText("")
         end
+        -- 撤销分配按钮（管理员可见）
+        if isOfficer then
+            row.auctionBtn:SetText("撤销")
+            row.auctionBtn:SetSize(46, 18)
+            row.auctionBtn:Show()
+            row.auctionBtn:SetScript("OnClick", function()
+                local winner = itemData.winner
+                local dkpCost = itemData.dkp or 0
+                local link = itemData.link or "物品"
+                StaticPopupDialogs["YTHT_DKP_UNDO_ASSIGN"] = {
+                    text = "撤销装备分配?\n" .. link .. " -> " .. winner ..
+                        (dkpCost > 0 and ("\n将退还 " .. dkpCost .. " DKP") or ""),
+                    button1 = "确定撤销",
+                    button2 = "取消",
+                    OnAccept = function()
+                        -- 退还 DKP
+                        if dkpCost > 0 and DKP.db.players[winner] then
+                            DKP.AdjustDKP(winner, dkpCost, "撤销分配: " .. link)
+                        end
+                        -- 清空分配
+                        itemData.winner = ""
+                        itemData.winnerClass = ""
+                        itemData.dkp = 0
+                        DKP.hasUnsavedChanges = true
+                        DKP.RefreshTableUI()
+                        if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                        DKP.Print("已撤销: " .. link .. " (退还 " .. winner .. " " .. dkpCost .. " DKP)")
+                    end,
+                    timeout = 0, whileDead = true, hideOnEscape = true,
+                }
+                local popup = StaticPopup_Show("YTHT_DKP_UNDO_ASSIGN")
+                if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+            end)
+        end
     else
         -- 未分配
         row.winnerText:SetText("|cff888888未分配|r")
