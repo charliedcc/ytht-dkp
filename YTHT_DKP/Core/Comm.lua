@@ -138,7 +138,7 @@ end
 ----------------------------------------------------------------------
 -- 分包发送
 ----------------------------------------------------------------------
-local CHUNK_SEND_INTERVAL = 0.05  -- 每个 chunk 间隔 50ms，避免 WoW 节流
+local CHUNK_SEND_INTERVAL = 0.2  -- 每个 chunk 间隔 200ms，避免 WoW 节流
 
 local function SendChunked(prefix, msgType, data, channel, target)
     -- 动态计算 chunk 大小，确保总消息 <= 255 字节
@@ -150,8 +150,10 @@ local function SendChunked(prefix, msgType, data, channel, target)
     local numChunks = math.ceil(totalLen / chunkSize)
     if numChunks == 0 then numChunks = 1 end
 
+    -- 超过5个chunk时显示发送进度
+    local showProgress = numChunks > 5
+
     for i = 1, numChunks do
-        -- 用延迟发送避免 WoW addon message 节流
         C_Timer.After((i - 1) * CHUNK_SEND_INTERVAL, function()
             local startPos = (i - 1) * chunkSize + 1
             local endPos = math.min(i * chunkSize, totalLen)
@@ -161,6 +163,9 @@ local function SendChunked(prefix, msgType, data, channel, target)
                 C_ChatInfo.SendAddonMessage(prefix, msg, "WHISPER", target)
             else
                 C_ChatInfo.SendAddonMessage(prefix, msg, channel or "RAID")
+            end
+            if showProgress and (i % 5 == 0 or i == numChunks) then
+                DKP.Print("|cff888888[同步] " .. msgType .. " " .. i .. "/" .. numChunks .. "|r")
             end
         end)
     end
@@ -407,6 +412,10 @@ local function HandleHistoryChunk(parts, sender)
     local received = 0
     for _ in pairs(sync.chunks) do received = received + 1 end
 
+    if totalChunks > 3 and (received % 3 == 0 or received == totalChunks) then
+        DKP.Print("|cff888888[接收] 拍卖记录 " .. received .. "/" .. totalChunks .. "|r")
+    end
+
     if received >= sync.expected then
         local fullData = {}
         for i = 1, sync.expected do
@@ -528,83 +537,91 @@ function DKP.BroadcastSheets()
 end
 
 ----------------------------------------------------------------------
+-- 单项广播函数
+----------------------------------------------------------------------
+function DKP.BroadcastDKPData()
+    if not DKP.IsOfficer() then return end
+    local channel = GetChannel()
+    if not channel then DKP.Print("不在队伍中"); return end
+    local data = SerializePlayers()
+    if data ~= "" then
+        SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", data, channel)
+        DKP.Print("已广播: DKP数据")
+    end
+end
+
+function DKP.BroadcastOptions()
+    if not DKP.IsOfficer() then return end
+    local channel = GetChannel()
+    if not channel then DKP.Print("不在队伍中"); return end
+    local data = SerializeOptions()
+    if data ~= "" then
+        SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", data, channel)
+        DKP.Print("已广播: 配置")
+    end
+end
+
+function DKP.BroadcastSheetsData()
+    if not DKP.IsOfficer() then return end
+    local channel = GetChannel()
+    if not channel then DKP.Print("不在队伍中"); return end
+    if DKP.SerializeSheets then
+        local data = DKP.SerializeSheets()
+        if data ~= "" then
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", data, channel)
+            DKP.Print("已广播: 掉落列表")
+        end
+    end
+end
+
+function DKP.BroadcastActivityData()
+    if not DKP.IsOfficer() then return end
+    local channel = GetChannel()
+    if not channel then DKP.Print("不在队伍中"); return end
+    if DKP.SerializeActivity then
+        local act = {
+            name = "sync",
+            startTime = DKP.db.session and DKP.db.session.startTime or 0,
+            endTime = time(),
+            log = DKP.db.log or {},
+            auctionHistory = DKP.db.auctionHistory or {},
+            sheets = {},
+            players = {},
+        }
+        local data = DKP.SerializeActivity(act)
+        if data ~= "" then
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_ACTIVITY", data, channel)
+            DKP.Print("已广播: 操作记录和拍卖记录")
+        end
+    end
+end
+
+----------------------------------------------------------------------
 -- 全量广播（含 players + options + admins）
 ----------------------------------------------------------------------
 function DKP.BroadcastFullSync()
     if not DKP.IsOfficer() then return end
-
-    local channel = GetChannel()
-    if not channel then
+    if not GetChannel() then
         DKP.Print("不在队伍中，无法广播")
         return
     end
 
-    -- 分批发送，用延迟避免 WoW 消息节流
-    -- 第1批: admin 列表 + players
+    DKP.Print("开始全量同步 (分5批发送)...")
+
+    -- 第1批: 权限
     DKP.BroadcastAdminSync()
-    local playersData = SerializePlayers()
-    if playersData ~= "" then
-        SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", playersData, channel)
-    end
 
-    -- 第2批: options（延迟1秒）
-    C_Timer.After(1, function()
-        local ch = GetChannel()
-        if not ch then return end
-        local optsData = SerializeOptions()
-        if optsData ~= "" then
-            SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, ch)
-        end
-        DKP.Print("已广播: 配置")
-    end)
+    -- 第2批: DKP数据（延迟1秒）
+    C_Timer.After(1, function() DKP.BroadcastDKPData() end)
 
-    -- 第3批: sheets（延迟3秒）
-    C_Timer.After(3, function()
-        local ch = GetChannel()
-        if not ch then return end
-        if DKP.SerializeSheets then
-            local sheetsData = DKP.SerializeSheets()
-            if sheetsData ~= "" then
-                SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, ch)
-                DKP.Print("已广播: 掉落列表")
-            end
-        end
-    end)
+    -- 第3批: 配置（延迟3秒）
+    C_Timer.After(3, function() DKP.BroadcastOptions() end)
 
-    -- 第4批: log + auctionHistory（延迟6秒，等前面的 chunks 发完）
-    C_Timer.After(6, function()
-        local ch = GetChannel()
-        if not ch then
-            DKP.Print("|cffFF8800[调试] 第4批: 无频道，跳过|r")
-            return
-        end
-        if DKP.SerializeActivity then
-            local logCount = DKP.db.log and #DKP.db.log or 0
-            local histCount = DKP.db.auctionHistory and #DKP.db.auctionHistory or 0
-            DKP.Print("|cff888888[调试] 准备广播: " .. logCount .. " 条日志, " .. histCount .. " 条拍卖记录|r")
-            local act = {
-                name = "sync",
-                startTime = DKP.db.session and DKP.db.session.startTime or 0,
-                endTime = time(),
-                log = DKP.db.log or {},
-                auctionHistory = DKP.db.auctionHistory or {},
-                sheets = {},
-                players = {},  -- 不重复发 players
-            }
-            local actData = DKP.SerializeActivity(act)
-            DKP.Print("|cff888888[调试] 序列化结果: " .. #actData .. " 字节|r")
-            if actData ~= "" then
-                SendChunked(DKP.ADDON_PREFIX, "SYNC_ACTIVITY", actData, ch)
-                DKP.Print("已广播: 操作记录和拍卖记录")
-            else
-                DKP.Print("|cffFF8800[调试] 序列化为空，跳过|r")
-            end
-        else
-            DKP.Print("|cffFF8800[调试] SerializeActivity 不存在|r")
-        end
-    end)
+    -- 第4批: 掉落列表（延迟5秒）
+    C_Timer.After(5, function() DKP.BroadcastSheetsData() end)
 
-    DKP.Print("开始广播数据到团队 (分4批发送)...")
+    -- 第5批: 操作记录+拍卖记录（延迟12秒）
+    C_Timer.After(12, function() DKP.BroadcastActivityData() end)
 end
 
 ----------------------------------------------------------------------
@@ -705,7 +722,9 @@ local function HandleActivityChunk(parts, sender)
     local received = 0
     for _ in pairs(sync.chunks) do received = received + 1 end
 
-    DKP.Print("|cff888888[调试] 收到活动数据 chunk " .. chunkIndex .. "/" .. totalChunks .. " (已收 " .. received .. ")|r")
+    if totalChunks > 5 and (received % 5 == 0 or received == totalChunks) then
+        DKP.Print("|cff888888[接收] 活动数据 " .. received .. "/" .. totalChunks .. "|r")
+    end
 
     if received >= sync.expected then
         local fullData = {}
@@ -760,6 +779,10 @@ local function HandleSheetsChunk(parts, sender)
     local received = 0
     for _ in pairs(sync.chunks) do received = received + 1 end
 
+    if totalChunks > 5 and (received % 5 == 0 or received == totalChunks) then
+        DKP.Print("|cff888888[接收] 掉落列表 " .. received .. "/" .. totalChunks .. "|r")
+    end
+
     if received >= sync.expected then
         local fullData = {}
         for i = 1, sync.expected do
@@ -773,8 +796,52 @@ local function HandleSheetsChunk(parts, sender)
 
         local senderShort = sender:match("^([^%-]+)") or sender
 
-        -- 直接接受掉落列表同步（来自管理员的数据默认信任）
-        DKP.db.sheets = newSheets
+        -- 合并掉落列表（按 sheetName + encounterID + rollID 去重）
+        for sheetName, newSheet in pairs(newSheets) do
+            if not DKP.db.sheets[sheetName] then
+                DKP.db.sheets[sheetName] = newSheet
+            else
+                local localSheet = DKP.db.sheets[sheetName]
+                for _, newBoss in ipairs(newSheet.bosses or {}) do
+                    -- 查找本地是否已有该 boss
+                    local localBoss = nil
+                    for _, lb in ipairs(localSheet.bosses or {}) do
+                        if lb.encounterID == newBoss.encounterID then
+                            localBoss = lb
+                            break
+                        end
+                    end
+                    if not localBoss then
+                        table.insert(localSheet.bosses, newBoss)
+                    else
+                        -- 合并击杀状态
+                        if newBoss.killed then localBoss.killed = true end
+                        -- 合并 items（按 rollID 去重）
+                        local existingRolls = {}
+                        for _, item in ipairs(localBoss.items or {}) do
+                            existingRolls[item.rollID] = true
+                        end
+                        for _, newItem in ipairs(newBoss.items or {}) do
+                            if not existingRolls[newItem.rollID] then
+                                table.insert(localBoss.items, newItem)
+                            else
+                                -- 更新已有 item 的 winner/dkp（可能对方已分配）
+                                for _, item in ipairs(localBoss.items) do
+                                    if item.rollID == newItem.rollID then
+                                        if (newItem.winner or "") ~= "" and (item.winner or "") == "" then
+                                            item.winner = newItem.winner
+                                            item.winnerClass = newItem.winnerClass
+                                            item.dkp = newItem.dkp
+                                        end
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
         DKP.Print("已同步掉落列表 (来自 " .. senderShort .. ")")
         if DKP.RefreshTableUI then DKP.RefreshTableUI() end
     end

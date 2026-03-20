@@ -119,7 +119,7 @@ f:SetScript("OnEvent", function(self, event, ...)
                 DKP.MarkBossKilled(instanceName, encounterID)
             end
 
-            -- Boss击杀自动加分
+            -- Boss击杀加分（需确认）
             if DKP.db.session.active and DKP.IsOfficer and DKP.IsOfficer()
                and DKP.db.options.enableBossKillBonus then
                 if not DKP.db.session.bossKills[encounterID] then
@@ -128,39 +128,30 @@ f:SetScript("OnEvent", function(self, event, ...)
                         and DKP.db.options.bossKillPointsByDifficulty[difficultyID]
                     local basePoints
                     if diffPoints ~= nil then
-                        basePoints = diffPoints  -- 难度有明确配置（包括0=不加分）
+                        basePoints = diffPoints
                     else
                         basePoints = DKP.db.options.bossKillPoints or 5
                     end
 
-                    if basePoints <= 0 then
-                        DKP.Print(encounterName .. " 击杀! (难度" .. difficultyID .. " 不加DKP)")
-                    else
+                    if basePoints > 0 then
                         -- 计算额外加分
                         local bonusPoints = 0
                         local bonusReasons = {}
 
-                        -- 开荒首杀额外加分
                         local progressionBonus = DKP.db.options.progressionBonusPoints or 0
                         if progressionBonus > 0 then
-                            if not DKP.db.session.firstKills then
-                                DKP.db.session.firstKills = {}
-                            end
+                            if not DKP.db.session.firstKills then DKP.db.session.firstKills = {} end
                             if not DKP.db.session.firstKills[encounterID] then
-                                DKP.db.session.firstKills[encounterID] = true
                                 bonusPoints = bonusPoints + progressionBonus
                                 table.insert(bonusReasons, "首杀+" .. progressionBonus)
                             end
                         end
 
-                        -- 团灭加分（每次团灭额外加分，击杀时结算）
                         local wipeBonus = DKP.db.options.wipeBonus or 0
                         if wipeBonus > 0 then
-                            local wipeCounts = DKP.db.session.wipeCounts or {}
-                            local wipes = wipeCounts[encounterID] or 0
+                            local wipes = (DKP.db.session.wipeCounts or {})[encounterID] or 0
                             if wipes > 0 then
-                                local maxWipes = DKP.db.options.wipeBonusMax or 10
-                                local effectiveWipes = math.min(wipes, maxWipes)
+                                local effectiveWipes = math.min(wipes, DKP.db.options.wipeBonusMax or 10)
                                 local wipeTotal = effectiveWipes * wipeBonus
                                 bonusPoints = bonusPoints + wipeTotal
                                 table.insert(bonusReasons, wipes .. "次团灭+" .. wipeTotal)
@@ -168,33 +159,78 @@ f:SetScript("OnEvent", function(self, event, ...)
                         end
 
                         local totalPoints = basePoints + bonusPoints
-                        DKP.db.session.bossKills[encounterID] = true
-
-                        -- 加分
                         local reason = "Boss击杀: " .. encounterName
                         if #bonusReasons > 0 then
                             reason = reason .. " (" .. table.concat(bonusReasons, ", ") .. ")"
                         end
 
-                        local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
-                        local names = {}
-                        for _, m in ipairs(members) do
-                            if m.playerName and m.online then
-                                table.insert(names, m.playerName)
-                            end
+                        -- 弹出确认框，而非自动执行
+                        local confirmText = encounterName .. " 击杀!\n全团 +" .. totalPoints .. " DKP"
+                        if bonusPoints > 0 then
+                            confirmText = confirmText .. "\n(基础" .. basePoints .. " + 额外" .. bonusPoints .. ")"
                         end
-                        local cnt = DKP.BulkAdjustDKPBatch and DKP.BulkAdjustDKPBatch(names, totalPoints, reason) or 0
-                        if cnt > 0 then
-                            local msg = encounterName .. " 击杀! " .. cnt .. " 名玩家 +" .. totalPoints .. " DKP"
-                            if bonusPoints > 0 then
-                                msg = msg .. " (基础" .. basePoints .. " + 额外" .. bonusPoints .. ")"
-                            end
-                            DKP.Print(msg)
-                            local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
-                            if channel then
-                                SendChatMessage("[YTHT-DKP] " .. msg, channel)
-                            end
+                        confirmText = confirmText .. "\n\n是否执行加分？"
+
+                        -- 用自定义对话框（避免 StaticPopup 无效）
+                        if not DKP._bossKillConfirmDialog then
+                            local d = CreateFrame("Frame", "YTHTDKPBossKillConfirm", UIParent, "BackdropTemplate")
+                            d:SetSize(320, 140)
+                            d:SetPoint("CENTER", 0, 100)
+                            d:SetFrameStrata("FULLSCREEN_DIALOG")
+                            d:SetFrameLevel(250)
+                            d:EnableMouse(true)
+                            d:SetBackdrop({
+                                bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+                                edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+                                edgeSize = 16,
+                                insets = { left = 4, right = 4, top = 4, bottom = 4 },
+                            })
+                            d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+                            d:Hide()
+                            local text = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                            text:SetPoint("TOP", 0, -12)
+                            text:SetWidth(290)
+                            d.text = text
+                            local yesBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                            yesBtn:SetSize(80, 24)
+                            yesBtn:SetPoint("BOTTOMLEFT", 20, 12)
+                            yesBtn:SetText("确定加分")
+                            d.yesBtn = yesBtn
+                            local noBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                            noBtn:SetSize(80, 24)
+                            noBtn:SetPoint("BOTTOMRIGHT", -20, 12)
+                            noBtn:SetText("跳过")
+                            noBtn:SetScript("OnClick", function() d:Hide() end)
+                            DKP._bossKillConfirmDialog = d
                         end
+
+                        local d = DKP._bossKillConfirmDialog
+                        d.text:SetText(confirmText)
+                        d.yesBtn:SetScript("OnClick", function()
+                            d:Hide()
+                            if DKP.db.session.bossKills[encounterID] then return end
+                            DKP.db.session.bossKills[encounterID] = true
+                            if progressionBonus > 0 and DKP.db.session.firstKills
+                               and not DKP.db.session.firstKills[encounterID] then
+                                DKP.db.session.firstKills[encounterID] = true
+                            end
+                            local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
+                            local names = {}
+                            for _, m in ipairs(members) do
+                                if m.playerName and m.online then
+                                    table.insert(names, m.playerName)
+                                end
+                            end
+                            local cnt = DKP.BulkAdjustDKPBatch and DKP.BulkAdjustDKPBatch(names, totalPoints, reason) or 0
+                            if cnt > 0 then
+                                local msg = encounterName .. " 击杀! " .. cnt .. " 名玩家 +" .. totalPoints .. " DKP"
+                                DKP.Print(msg)
+                                local ch = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+                                if ch then SendChatMessage("[YTHT-DKP] " .. msg, ch) end
+                            end
+                            if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                        end)
+                        d:Show()
                     end
                 end
             end
@@ -268,6 +304,10 @@ f:SetScript("OnEvent", function(self, event, ...)
 
         if itemData then
             DKP.Print("装备入表: " .. itemLink .. " (来自 " .. bossName .. ")")
+            -- 管理员自动广播掉落列表变化
+            if DKP.IsOfficer and DKP.IsOfficer() and DKP.BroadcastSheets then
+                DKP.BroadcastSheets()
+            end
         end
 
         -- 自动打开主界面（如果还没打开）

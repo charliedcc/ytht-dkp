@@ -23,7 +23,7 @@ local CLASS_NAMES = {
 }
 
 -- UI 常量
-local TOOLBAR_HEIGHT = 56
+local TOOLBAR_HEIGHT = 80
 local ROW_HEIGHT = 26
 local COL_NAME_WIDTH = 120
 local COL_CHARS_WIDTH = 320
@@ -3217,37 +3217,58 @@ function DKP.InitDKPPanel()
     settingsBtn:SetText("设置")
     settingsBtn:SetScript("OnClick", function() ShowSettingsDialog() end)
 
-    local syncAdminBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    syncAdminBtn:SetSize(68, 22)
-    syncAdminBtn:SetPoint("LEFT", settingsBtn, "RIGHT", 4, 0)
-    syncAdminBtn:SetText("同步权限")
-    syncAdminBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then
-            DKP.Print("只有管理员可以同步权限")
-            return
-        end
-        if DKP.BroadcastAdminSync then
-            DKP.BroadcastAdminSync()
-            DKP.Print("已广播管理员权限到团队")
-        end
+    -- === 第三排：同步操作 ===
+    local ROW3_Y = -54
+    local TOOLBAR_ROW3 = true
+
+    local syncAllBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncAllBtn:SetSize(68, 22)
+    syncAllBtn:SetPoint("TOPLEFT", 0, ROW3_Y)
+    syncAllBtn:SetText("同步全部")
+    syncAllBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
+        if DKP.BroadcastFullSync then DKP.BroadcastFullSync() end
     end)
 
-    local syncDataBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    syncDataBtn:SetSize(68, 22)
-    syncDataBtn:SetPoint("LEFT", syncAdminBtn, "RIGHT", 4, 0)
-    syncDataBtn:SetText("同步数据")
-    syncDataBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then
-            DKP.Print("只有管理员可以同步数据")
-            return
-        end
-        if DKP.BroadcastFullSync then
-            DKP.BroadcastFullSync()
-        end
+    local syncAdminBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncAdminBtn:SetSize(68, 22)
+    syncAdminBtn:SetPoint("LEFT", syncAllBtn, "RIGHT", 4, 0)
+    syncAdminBtn:SetText("同步权限")
+    syncAdminBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
+        if DKP.BroadcastAdminSync then DKP.BroadcastAdminSync(); DKP.Print("已广播权限") end
+    end)
+
+    local syncDKPBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncDKPBtn:SetSize(68, 22)
+    syncDKPBtn:SetPoint("LEFT", syncAdminBtn, "RIGHT", 4, 0)
+    syncDKPBtn:SetText("同步DKP")
+    syncDKPBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
+        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+    end)
+
+    local syncLootBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncLootBtn:SetSize(72, 22)
+    syncLootBtn:SetPoint("LEFT", syncDKPBtn, "RIGHT", 4, 0)
+    syncLootBtn:SetText("同步掉落")
+    syncLootBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
+        if DKP.BroadcastSheetsData then DKP.BroadcastSheetsData() end
+    end)
+
+    local syncRecordBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncRecordBtn:SetSize(72, 22)
+    syncRecordBtn:SetPoint("LEFT", syncLootBtn, "RIGHT", 4, 0)
+    syncRecordBtn:SetText("同步记录")
+    syncRecordBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
+        if DKP.BroadcastActivityData then DKP.BroadcastActivityData() end
     end)
 
     -- 管理员专用按钮列表（RefreshDKPUI 时根据权限显示/隐藏）
-    parent.adminButtons = { bulkBtn, raidBtn, addBtn, importBtn, settingsBtn, syncAdminBtn, syncDataBtn }
+    parent.adminButtons = { bulkBtn, raidBtn, addBtn, importBtn, settingsBtn,
+        syncAllBtn, syncAdminBtn, syncDKPBtn, syncLootBtn, syncRecordBtn }
 
     -- 表头
     local headerY = -TOOLBAR_HEIGHT - 2

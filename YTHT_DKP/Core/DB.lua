@@ -20,8 +20,8 @@ local defaults = {
         gatherPoints = 3,
         dismissPoints = 2,
         bossKillPoints = 5,
-        -- Boss击杀加分开关 (true=启用, false=禁用)
-        enableBossKillBonus = true,
+        -- Boss击杀加分开关 (true=启用, false=禁用，启用后击杀弹确认框)
+        enableBossKillBonus = false,
         -- 按难度配置加分 (difficultyID -> 分值, 0或nil表示该难度不加分)
         -- WoW 难度ID: 1=普通, 2=英雄, 3=10人, 4=25人, 14=普通(新), 15=英雄(新), 16=史诗, 17=随机
         bossKillPointsByDifficulty = {
