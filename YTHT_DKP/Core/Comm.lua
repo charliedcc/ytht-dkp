@@ -779,22 +779,46 @@ end
 
 function DKP.BroadcastActivityData()
     if not DKP.IsOfficer() then return end
+    DKP.BroadcastLogData()
+    C_Timer.After(5, function() DKP.BroadcastAuctionHistoryData() end)
+end
+
+function DKP.BroadcastLogData()
+    if not DKP.IsOfficer() then return end
     local channel = GetChannel()
     if not channel then DKP.Print("不在队伍中"); return end
     if DKP.SerializeActivity then
         local act = {
-            name = "sync",
-            startTime = DKP.db.session and DKP.db.session.startTime or 0,
-            endTime = time(),
+            name = "sync_log",
+            startTime = 0, endTime = time(),
             log = DKP.db.log or {},
-            auctionHistory = DKP.db.auctionHistory or {},
-            sheets = {},
-            players = {},
+            auctionHistory = {},
+            sheets = {}, players = {},
         }
         local data = DKP.SerializeActivity(act)
         if data ~= "" then
-            SendChunked(DKP.ADDON_PREFIX, "SYNC_ACTIVITY", data, channel)
-            DKP.Print("已广播: 操作记录和拍卖记录")
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel)
+            DKP.Print("已广播: 操作记录")
+        end
+    end
+end
+
+function DKP.BroadcastAuctionHistoryData()
+    if not DKP.IsOfficer() then return end
+    local channel = GetChannel()
+    if not channel then DKP.Print("不在队伍中"); return end
+    if DKP.SerializeActivity then
+        local act = {
+            name = "sync_history",
+            startTime = 0, endTime = time(),
+            log = {},
+            auctionHistory = DKP.db.auctionHistory or {},
+            sheets = {}, players = {},
+        }
+        local data = DKP.SerializeActivity(act)
+        if data ~= "" then
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_AUCTION_HISTORY", data, channel)
+            DKP.Print("已广播: 拍卖记录")
         end
     end
 end
@@ -823,8 +847,11 @@ function DKP.BroadcastFullSync()
     -- 第4批: 掉落列表（延迟5秒）
     C_Timer.After(5, function() DKP.BroadcastSheetsData() end)
 
-    -- 第5批: 操作记录+拍卖记录（延迟30秒，等前面 chunks 全部发完）
-    C_Timer.After(30, function() DKP.BroadcastActivityData() end)
+    -- 第5批: 操作记录（延迟30秒）
+    C_Timer.After(30, function() DKP.BroadcastLogData() end)
+
+    -- 第6批: 拍卖记录（延迟45秒）
+    C_Timer.After(45, function() DKP.BroadcastAuctionHistoryData() end)
 end
 
 ----------------------------------------------------------------------
@@ -909,6 +936,69 @@ local pendingActivitySync = {}
 ----------------------------------------------------------------------
 -- Activity 同步接收（log + auctionHistory）
 ----------------------------------------------------------------------
+local pendingLogSync = {}
+local pendingAuctionHistSync = {}
+
+-- 通用 activity 格式接收器（用于 SYNC_LOG / SYNC_AUCTION_HISTORY / SYNC_ACTIVITY）
+local function HandleActivityFormatChunk(parts, sender, pendingTable, sKey, label, applyFn)
+    local chunkIndex = tonumber(parts[2])
+    local totalChunks = tonumber(parts[3])
+    local chunkData = parts[4] or ""
+    if not chunkIndex or not totalChunks then return end
+
+    if not pendingTable[sKey] then
+        pendingTable[sKey] = { chunks = {}, expected = totalChunks, lastReceived = GetTime() }
+    end
+    local sync = pendingTable[sKey]
+    sync.chunks[chunkIndex] = chunkData
+    sync.lastReceived = GetTime()
+
+    local received = 0
+    for _ in pairs(sync.chunks) do received = received + 1 end
+
+    if totalChunks > 5 and (received % 5 == 0 or received == totalChunks) then
+        DKP.Print("|cff888888[接收] " .. label .. " " .. received .. "/" .. totalChunks .. "|r")
+    end
+
+    if received >= sync.expected then
+        local fullData = {}
+        for i = 1, sync.expected do
+            table.insert(fullData, sync.chunks[i] or "")
+        end
+        local text = table.concat(fullData)
+        pendingTable[sKey] = nil
+
+        if not IsTrustedSender(sender) then return end
+
+        if DKP.DeserializeActivity then
+            local act = DKP.DeserializeActivity(text)
+            if act then
+                applyFn(act, sender)
+            end
+        end
+    end
+end
+
+local function HandleLogChunk(parts, sender)
+    HandleActivityFormatChunk(parts, sender, pendingLogSync, sender .. "_log", "操作记录", function(act, s)
+        if act.log and #act.log > 0 then
+            DKP.db.log = act.log
+            DKP.Print("已同步操作记录 (" .. #act.log .. " 条, 来自 " .. GetShortName(s) .. ")")
+            if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+        end
+    end)
+end
+
+local function HandleAuctionHistChunk(parts, sender)
+    HandleActivityFormatChunk(parts, sender, pendingAuctionHistSync, sender .. "_ahist", "拍卖记录", function(act, s)
+        if act.auctionHistory and #act.auctionHistory > 0 then
+            DKP.db.auctionHistory = act.auctionHistory
+            DKP.Print("已同步拍卖记录 (" .. #act.auctionHistory .. " 条, 来自 " .. GetShortName(s) .. ")")
+            if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+        end
+    end)
+end
+
 local function HandleActivityChunk(parts, sender)
     local chunkIndex = tonumber(parts[2])
     local totalChunks = tonumber(parts[3])
@@ -1140,6 +1230,10 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
             HandleSheetsChunk(parts, sender)
         elseif msgType == "SYNC_ACTIVITY" then
             HandleActivityChunk(parts, sender)
+        elseif msgType == "SYNC_LOG" then
+            HandleLogChunk(parts, sender)
+        elseif msgType == "SYNC_AUCTION_HISTORY" then
+            HandleAuctionHistChunk(parts, sender)
         elseif msgType == "ADMIN_SYNC" or msgType == "TEAM_SYNC" then
             HandleTeamSync(parts, sender)
         elseif msgType == "HISTORY_ENTRY" then

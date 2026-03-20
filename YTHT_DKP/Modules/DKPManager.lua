@@ -3112,6 +3112,18 @@ local function ShowLogDialog()
         countText:SetTextColor(0.5, 0.5, 0.5)
         d.countText = countText
 
+        local syncLogBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        syncLogBtn:SetSize(80, 24)
+        syncLogBtn:SetPoint("BOTTOMLEFT", 100, 14)
+        syncLogBtn:SetText("同步日志")
+        syncLogBtn:SetScript("OnClick", function()
+            if not DKP.IsOfficer or not DKP.IsOfficer() then
+                DKP.Print("只有管理员可以同步")
+                return
+            end
+            if DKP.BroadcastLogData then DKP.BroadcastLogData() end
+        end)
+
         local closeFooterBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
         closeFooterBtn:SetSize(80, 24)
         closeFooterBtn:SetPoint("BOTTOMRIGHT", -16, 14)

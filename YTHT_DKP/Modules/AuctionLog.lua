@@ -99,13 +99,13 @@ function DKP.InitAuctionLogPanel()
     local syncRecordBtn = CreateFrame("Button", nil, leftFrame, "UIPanelButtonTemplate")
     syncRecordBtn:SetSize(60, 16)
     syncRecordBtn:SetPoint("LEFT", clearLogBtn, "RIGHT", 4, 0)
-    syncRecordBtn:SetText("同步记录")
+    syncRecordBtn:SetText("同步拍卖")
     syncRecordBtn:SetScript("OnClick", function()
         if not DKP.IsOfficer or not DKP.IsOfficer() then
             DKP.Print("只有管理员可以同步")
             return
         end
-        if DKP.BroadcastActivityData then DKP.BroadcastActivityData() end
+        if DKP.BroadcastAuctionHistoryData then DKP.BroadcastAuctionHistoryData() end
     end)
 
     -- 左侧滚动区
