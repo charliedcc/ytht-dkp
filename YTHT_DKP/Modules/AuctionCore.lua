@@ -180,6 +180,10 @@ function DKP.PlaceBid(auctionID, amount, isAllIn)
 
     -- 检查可用余额
     local myPlayerName = GetMyPlayerName()
+    if not DKP.db.players[myPlayerName] then
+        DKP.Print("你不在DKP名单中，无法出价 (角色: " .. (DKP.playerName or "?") .. ")")
+        return false
+    end
     local available = DKP.GetAvailableDKP(myPlayerName)
     -- 如果我已经是这个拍卖的领先者，可用余额要加回当前出价
     if auction.currentBidderPlayer == myPlayerName then

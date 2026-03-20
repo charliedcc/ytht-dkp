@@ -170,6 +170,13 @@ local function HandleSyncRequest(sender)
     if optsData ~= "" then
         SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, nil, sender)
     end
+    -- 发送 sheets
+    if DKP.SerializeSheets then
+        local sheetsData = DKP.SerializeSheets()
+        if sheetsData ~= "" then
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, nil, sender)
+        end
+    end
     DKP.BroadcastAdminSync()
 end
 
@@ -564,28 +571,31 @@ function DKP.DeserializeSheets(text)
         if sheetName then
             local sheet = { bosses = {} }
             if bossesStr ~= "" then
-                for bossStr in bossesStr:gmatch("[^@@]+") do
-                    local bParts = { strsplit("~", bossStr) }
-                    local boss = {
-                        name = bParts[1] or "",
-                        encounterID = tonumber(bParts[2]) or 0,
-                        killed = bParts[3] == "1",
-                        items = {},
-                    }
-                    local itemsStr = bParts[4] or ""
-                    if itemsStr ~= "" then
-                        for itemStr in itemsStr:gmatch("[^%^]+") do
-                            local iParts = { strsplit("|", itemStr) }
-                            table.insert(boss.items, {
-                                link = iParts[1] or "",
-                                winner = iParts[2] or "",
-                                winnerClass = iParts[3] or "",
-                                dkp = tonumber(iParts[4]) or 0,
-                                rollID = tonumber(iParts[5]) or 0,
-                            })
+                -- 用 @@ 作为分隔符拆分 boss（gsub+gmatch 绕开 Lua 模式限制）
+                for bossStr in (bossesStr .. "@@"):gmatch("(.-)@@") do
+                    if bossStr ~= "" then
+                        local bParts = { strsplit("~", bossStr) }
+                        local boss = {
+                            name = bParts[1] or "",
+                            encounterID = tonumber(bParts[2]) or 0,
+                            killed = bParts[3] == "1",
+                            items = {},
+                        }
+                        local itemsStr = bParts[4] or ""
+                        if itemsStr ~= "" then
+                            for itemStr in itemsStr:gmatch("[^%^]+") do
+                                local iParts = { strsplit("|", itemStr) }
+                                table.insert(boss.items, {
+                                    link = iParts[1] or "",
+                                    winner = iParts[2] or "",
+                                    winnerClass = iParts[3] or "",
+                                    dkp = tonumber(iParts[4]) or 0,
+                                    rollID = tonumber(iParts[5]) or 0,
+                                })
+                            end
                         end
+                        table.insert(sheet.bosses, boss)
                     end
-                    table.insert(sheet.bosses, boss)
                 end
             end
             result[sheetName] = sheet
