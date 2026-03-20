@@ -22,10 +22,14 @@ f:SetScript("OnEvent", function(self, event, ...)
         -- 只在有DKP数据时回复
         if not DKP.db or not DKP.db.players or not next(DKP.db.players) then return end
 
+        -- 忽略自己发出的回复（含 [YTHT-DKP] 前缀）
+        if msg:find("%[YTHT%-DKP%]") then return end
+
         local isQuery = false
-        local lowerMsg = (msg or ""):lower()
+        local trimmed = (msg or ""):match("^%s*(.-)%s*$"):lower()
         for _, pattern in ipairs(QUERY_PATTERNS) do
-            if lowerMsg:find(pattern:lower(), 1, true) then
+            -- 只匹配简短查询（整条消息就是查询词，或非常短的消息包含查询词）
+            if trimmed == pattern:lower() or (#trimmed <= 10 and trimmed:find(pattern:lower(), 1, true)) then
                 isQuery = true
                 break
             end

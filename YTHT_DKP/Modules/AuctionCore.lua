@@ -116,6 +116,7 @@ function DKP.StartAuction(itemLink, startBid, duration, encounterInfo)
         bids = {},
         tiedBidders = nil,
         officer = DKP.playerName,
+        officerFullName = DKP.playerFullName or (DKP.playerName .. "-" .. GetRealmName()),
         -- encounter 信息
         encounterID = encounterInfo and encounterInfo.encounterID or nil,
         encounterName = encounterInfo and encounterInfo.encounterName or nil,
@@ -130,9 +131,10 @@ function DKP.StartAuction(itemLink, startBid, duration, encounterInfo)
         auction.itemData.activeAuctionID = id
     end
 
-    -- 广播 START
+    -- 广播 START (含 officerFullName 用于 WHISPER 出价)
+    local myFullName = DKP.playerFullName or (DKP.playerName .. "-" .. GetRealmName())
     local msg = table.concat({
-        "START", id, itemLink, tostring(startBid), tostring(duration), DKP.playerName
+        "START", id, itemLink, tostring(startBid), tostring(duration), DKP.playerName, myFullName
     }, MSG_SEP)
     SendAuctionMsg(msg)
 
@@ -196,7 +198,7 @@ function DKP.PlaceBid(auctionID, amount, isAllIn)
 
     -- 发送 BID 到管理员
     if auction.officer then
-        local officerFull = auction.officer
+        local officerFull = auction.officerFullName or auction.officer
         if not officerFull:find("-") then
             officerFull = officerFull .. "-" .. GetRealmName()
         end
@@ -601,12 +603,13 @@ end
 -- 接收消息处理
 ----------------------------------------------------------------------
 local function HandleAuctionStart(parts, sender)
-    -- parts: START, id, itemLink, startBid, duration, officer
+    -- parts: START, id, itemLink, startBid, duration, officer, officerFullName
     local id = parts[2]
     local itemLink = parts[3]
     local startBid = tonumber(parts[4]) or 10
     local duration = tonumber(parts[5]) or 30
     local officer = parts[6] or sender
+    local officerFullName = parts[7] or sender
 
     if DKP.activeAuctions[id] then return end  -- 已存在
 
@@ -625,6 +628,7 @@ local function HandleAuctionStart(parts, sender)
         bids = {},
         tiedBidders = nil,
         officer = officer,
+        officerFullName = officerFullName,
     }
 
     DKP.Print("拍卖开始: " .. (itemLink or "物品") .. " 起拍 " .. startBid .. " DKP")
@@ -733,14 +737,13 @@ local function HandleAuctionSync(parts, sender)
     for id, auction in pairs(DKP.activeAuctions) do
         if auction.state == DKP.AUCTION_STATE.ACTIVE then
             local remaining = math.max(0, math.floor(auction.endTime - GetTime()))
+            local myFullName = DKP.playerFullName or (DKP.playerName .. "-" .. GetRealmName())
             local msg = table.concat({
                 "START", id, auction.itemLink or "", tostring(auction.startBid),
-                tostring(remaining), auction.officer or DKP.playerName
+                tostring(remaining), auction.officer or DKP.playerName,
+                auction.officerFullName or myFullName
             }, MSG_SEP)
             local target = sender
-            if not target:find("-") then
-                target = target .. "-" .. GetRealmName()
-            end
             SendAuctionWhisper(msg, target)
             if auction.currentBid > 0 then
                 local updateMsg = table.concat({
