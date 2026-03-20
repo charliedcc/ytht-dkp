@@ -306,7 +306,10 @@ local function SetRowData(row, entry, rowIndex)
     local state = entry.state or "ENDED"
     if state == "ACTIVE" then
         if entry.currentBidder and entry.currentBidder ~= "" then
-            row.winnerText:SetText("|cffFFFF00" .. entry.currentBidder .. "|r")
+            row.winnerText:SetText(DKP.ClassColorText(
+                entry.currentBidder,
+                entry.currentBidderClass or "WARRIOR"
+            ))
         else
             row.winnerText:SetText("|cff888888等待出价|r")
         end

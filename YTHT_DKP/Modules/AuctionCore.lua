@@ -199,19 +199,17 @@ function DKP.PlaceBid(auctionID, amount, isAllIn)
         return false
     end
 
-    -- 发送 BID 到管理员
-    if auction.officer then
+    -- 如果自己是管理员（本地也是竞拍者），直接处理，不发 WHISPER
+    if DKP.IsOfficer() and auction.officer == DKP.playerName then
+        DKP.ProcessBid(DKP.playerName, auctionID, amount, isAllIn)
+    elseif auction.officer then
+        -- 非管理员：发 BID WHISPER 到管理员
         local officerFull = auction.officerFullName or auction.officer
         if not officerFull:find("-") then
             officerFull = officerFull .. "-" .. GetRealmName()
         end
         local msg = table.concat({ "BID", auctionID, tostring(amount), isAllIn and "1" or "0" }, MSG_SEP)
         SendAuctionWhisper(msg, officerFull)
-    end
-
-    -- 如果自己是管理员（本地也是竞拍者），直接处理
-    if DKP.IsOfficer() and auction.officer == DKP.playerName then
-        DKP.ProcessBid(DKP.playerName, auctionID, amount, isAllIn)
     end
 
     return true
@@ -671,16 +669,26 @@ local function HandleAuctionUpdate(parts, sender)
         auction.currentBidderPlayer = DKP.GetPlayerByCharacter(bidderName) or bidderName
     end
 
-    -- 追加到本地 bids 记录（非管理员客户端也能看到完整出价历史）
+    -- 追加到本地 bids 记录（去重：同一出价者同一金额不重复追加）
     if bidderName and currentBid then
-        table.insert(auction.bids, {
-            bidder = bidderName,
-            bidderPlayer = auction.currentBidderPlayer or bidderName,
-            amount = currentBid,
-            timestamp = GetTime(),
-            wallTime = time(),
-            isAllIn = isAllIn,
-        })
+        local isDuplicate = false
+        local bids = auction.bids
+        if #bids > 0 then
+            local last = bids[#bids]
+            if last.bidder == bidderName and last.amount == currentBid then
+                isDuplicate = true
+            end
+        end
+        if not isDuplicate then
+            table.insert(bids, {
+                bidder = bidderName,
+                bidderPlayer = auction.currentBidderPlayer or bidderName,
+                amount = currentBid,
+                timestamp = GetTime(),
+                wallTime = time(),
+                isAllIn = isAllIn,
+            })
+        end
     end
 
     -- 延长计时（客户端同步）
