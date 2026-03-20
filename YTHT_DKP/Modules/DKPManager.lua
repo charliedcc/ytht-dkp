@@ -1771,7 +1771,7 @@ function DKP.SerializeActivity(activity)
             entry.encounterName or "",
             entry.instanceName or "",
             bidsStr,
-        }, "|"))
+        }, "\031"))
     end
 
     -- SHEETS
@@ -1883,8 +1883,7 @@ function DKP.DeserializeActivity(text)
                 table.insert(activity.log, entry)
             end
         elseif currentSection == "AUCTION_HISTORY" then
-            local parts = {}
-            for part in line:gmatch("[^|]+") do table.insert(parts, part) end
+            local parts = { strsplit("\031", line) }
             if #parts >= 10 then
                 local bids = {}
                 if parts[14] and parts[14] ~= "" then
@@ -2186,6 +2185,7 @@ function DKP.ShowExportDialog(preloadText)
                 name = date("%m-%d %H:%M") .. " 当前",
                 startTime = DKP.db.session and DKP.db.session.startTime or time(),
                 endTime = time(),
+                players = DKP.db.players,
                 log = DKP.db.log,
                 auctionHistory = DKP.db.auctionHistory,
                 sheets = DKP.db.sheets,
@@ -3217,13 +3217,28 @@ function DKP.InitDKPPanel()
     settingsBtn:SetText("设置")
     settingsBtn:SetScript("OnClick", function() ShowSettingsDialog() end)
 
-    local broadcastBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    broadcastBtn:SetSize(50, 22)
-    broadcastBtn:SetPoint("LEFT", settingsBtn, "RIGHT", 4, 0)
-    broadcastBtn:SetText("广播")
-    broadcastBtn:SetScript("OnClick", function()
+    local syncAdminBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncAdminBtn:SetSize(68, 22)
+    syncAdminBtn:SetPoint("LEFT", settingsBtn, "RIGHT", 4, 0)
+    syncAdminBtn:SetText("同步权限")
+    syncAdminBtn:SetScript("OnClick", function()
         if not DKP.IsOfficer() then
-            DKP.Print("只有管理员可以广播数据")
+            DKP.Print("只有管理员可以同步权限")
+            return
+        end
+        if DKP.BroadcastAdminSync then
+            DKP.BroadcastAdminSync()
+            DKP.Print("已广播管理员权限到团队")
+        end
+    end)
+
+    local syncDataBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncDataBtn:SetSize(68, 22)
+    syncDataBtn:SetPoint("LEFT", syncAdminBtn, "RIGHT", 4, 0)
+    syncDataBtn:SetText("同步数据")
+    syncDataBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then
+            DKP.Print("只有管理员可以同步数据")
             return
         end
         if DKP.BroadcastFullSync then
@@ -3232,7 +3247,7 @@ function DKP.InitDKPPanel()
     end)
 
     -- 管理员专用按钮列表（RefreshDKPUI 时根据权限显示/隐藏）
-    parent.adminButtons = { bulkBtn, raidBtn, addBtn, importBtn, settingsBtn, broadcastBtn }
+    parent.adminButtons = { bulkBtn, raidBtn, addBtn, importBtn, settingsBtn, syncAdminBtn, syncDataBtn }
 
     -- 表头
     local headerY = -TOOLBAR_HEIGHT - 2

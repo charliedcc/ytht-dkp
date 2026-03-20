@@ -327,6 +327,8 @@ local function HandleAdminSync(parts, sender)
         DKP.db.masterAdmin = newMaster
     end
     DKP.Print("已同步管理员列表 (来自 " .. senderShort .. ")")
+    -- 刷新UI权限显示
+    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
 end
 
 ----------------------------------------------------------------------
