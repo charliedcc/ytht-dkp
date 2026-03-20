@@ -139,13 +139,20 @@ end
 -- 分包发送
 ----------------------------------------------------------------------
 local function SendChunked(prefix, msgType, data, channel, target)
+    -- 动态计算 chunk 大小，确保总消息 <= 255 字节
+    -- 头部格式: msgType\tchunkIndex\ttotalChunks\t
+    -- 预估最大头部: msgType(15) + \t + chunkIndex(4) + \t + totalChunks(4) + \t = ~25
+    local headerReserve = #msgType + 12  -- msgType长度 + 数字和分隔符
+    local chunkSize = 255 - headerReserve
+    if chunkSize < 50 then chunkSize = 50 end
+
     local totalLen = #data
-    local numChunks = math.ceil(totalLen / CHUNK_SIZE)
+    local numChunks = math.ceil(totalLen / chunkSize)
     if numChunks == 0 then numChunks = 1 end
 
     for i = 1, numChunks do
-        local startPos = (i - 1) * CHUNK_SIZE + 1
-        local endPos = math.min(i * CHUNK_SIZE, totalLen)
+        local startPos = (i - 1) * chunkSize + 1
+        local endPos = math.min(i * chunkSize, totalLen)
         local chunk = data:sub(startPos, endPos)
         local msg = table.concat({ msgType, tostring(i), tostring(numChunks), chunk }, MSG_SEP)
         if target then
@@ -342,7 +349,7 @@ end
 function DKP.BroadcastHistoryEntry(entry)
     if not DKP.IsOfficer() then return end
     if not entry then return end
-    -- 序列化关键字段（精简版，不含完整bids）
+    -- 序列化关键字段
     local bidsStr = ""
     if entry.bids and #entry.bids > 0 then
         local bidParts = {}
@@ -365,8 +372,8 @@ function DKP.BroadcastHistoryEntry(entry)
         tiedStr = table.concat(parts, ";")
     end
 
-    local msg = table.concat({
-        "HISTORY_ENTRY",
+    -- 用 \031 (unit separator) 分隔字段（不用 \t 或 | 因为 itemLink 含 |）
+    local data = table.concat({
         entry.id or "",
         entry.itemLink or "",
         entry.state or "ENDED",
@@ -382,96 +389,128 @@ function DKP.BroadcastHistoryEntry(entry)
         entry.instanceName or "",
         bidsStr,
         tiedStr,
-    }, MSG_SEP)
+    }, "\031")
 
-    DKP.SendDKPMessage(msg)
+    -- 用 chunked 发送（itemLink 可能很长，单条消息超 255 字节）
+    local channel = GetChannel()
+    if channel then
+        SendChunked(DKP.ADDON_PREFIX, "HISTORY_ENTRY", data, channel)
+    end
 end
 
-local function HandleHistoryEntry(parts, sender)
-    local senderShort = sender:match("^([^%-]+)") or sender
-    -- 只接受管理员广播的历史
-    if DKP.db.admins and next(DKP.db.admins) and not DKP.db.admins[senderShort] then
-        return
+local pendingHistorySync = {}
+
+local function HandleHistoryChunk(parts, sender)
+    local chunkIndex = tonumber(parts[2])
+    local totalChunks = tonumber(parts[3])
+    local chunkData = parts[4] or ""
+    if not chunkIndex or not totalChunks then return end
+
+    local sKey = sender .. "_hist"
+    if not pendingHistorySync[sKey] then
+        pendingHistorySync[sKey] = { chunks = {}, expected = totalChunks }
     end
+    local sync = pendingHistorySync[sKey]
+    sync.chunks[chunkIndex] = chunkData
 
-    local entryId = parts[2] or ""
-    local itemLink = parts[3] or ""
-    local state = parts[4] or "ENDED"
-    local winner = parts[5]
-    local winnerChar = parts[6]
-    local winnerClass = parts[7]
-    local finalBid = tonumber(parts[8]) or 0
-    local startBid = tonumber(parts[9]) or 0
-    local bidCount = tonumber(parts[10]) or 0
-    local timestamp = tonumber(parts[11]) or time()
-    local officer = parts[12] or senderShort
-    local encounterName = parts[13]
-    local instanceName = parts[14]
-    local bidsStr = parts[15] or ""
-    local tiedStr = parts[16] or ""
+    local received = 0
+    for _ in pairs(sync.chunks) do received = received + 1 end
 
-    if winner == "" then winner = nil end
-    if winnerChar == "" then winnerChar = nil end
-    if winnerClass == "" then winnerClass = nil end
-    if encounterName == "" then encounterName = nil end
-    if instanceName == "" then instanceName = nil end
-
-    -- 去重：检查是否已有相同 id 的记录
-    for _, existing in ipairs(DKP.db.auctionHistory) do
-        if existing.id and existing.id == entryId and entryId ~= "" then
-            return  -- 已存在
+    if received >= sync.expected then
+        local fullData = {}
+        for i = 1, sync.expected do
+            table.insert(fullData, sync.chunks[i] or "")
         end
-    end
+        local data = table.concat(fullData)
+        pendingHistorySync[sKey] = nil
 
-    -- 解析 bids
-    local bids = {}
-    if bidsStr ~= "" then
-        for bidEntry in bidsStr:gmatch("[^;]+") do
-            local bidder, amount, isAllIn, ts = bidEntry:match("^(.+):(%d+):([01]):(%d+)$")
-            if bidder then
-                table.insert(bids, {
-                    bidder = bidder,
-                    bidderPlayer = DKP.GetPlayerByCharacter and DKP.GetPlayerByCharacter(bidder) or bidder,
-                    amount = tonumber(amount) or 0,
-                    isAllIn = isAllIn == "1",
-                    timestamp = tonumber(ts) or 0,
-                })
+        local senderShort = sender:match("^([^%-]+)") or sender
+        -- 只接受管理员广播的历史
+        if DKP.db.admins and next(DKP.db.admins) and not DKP.db.admins[senderShort] then
+            return
+        end
+
+        -- 解析 \031 分隔的字段
+        local f = { strsplit("\031", data) }
+        local entryId = f[1] or ""
+        local itemLink = f[2] or ""
+        local state = f[3] or "ENDED"
+        local winner = f[4]
+        local winnerChar = f[5]
+        local winnerClass = f[6]
+        local finalBid = tonumber(f[7]) or 0
+        local startBid = tonumber(f[8]) or 0
+        local bidCount = tonumber(f[9]) or 0
+        local timestamp = tonumber(f[10]) or time()
+        local officer = f[11] or senderShort
+        local encounterName = f[12]
+        local instanceName = f[13]
+        local bidsStr = f[14] or ""
+        local tiedStr = f[15] or ""
+
+        if winner == "" then winner = nil end
+        if winnerChar == "" then winnerChar = nil end
+        if winnerClass == "" then winnerClass = nil end
+        if encounterName == "" then encounterName = nil end
+        if instanceName == "" then instanceName = nil end
+
+        -- 去重
+        for _, existing in ipairs(DKP.db.auctionHistory) do
+            if existing.id and existing.id == entryId and entryId ~= "" then
+                return
             end
         end
-    end
 
-    -- 解析 tiedBidders
-    local tiedBidders = nil
-    if tiedStr ~= "" then
-        tiedBidders = {}
-        for tbEntry in tiedStr:gmatch("[^;]+") do
-            local name, playerName = tbEntry:match("^(.+):(.+)$")
-            if name then
-                table.insert(tiedBidders, { name = name, playerName = playerName })
+        -- 解析 bids
+        local bids = {}
+        if bidsStr ~= "" then
+            for bidEntry in bidsStr:gmatch("[^;]+") do
+                local bidder, amount, isAllIn, ts = bidEntry:match("^(.+):(%d+):([01]):(%d+)$")
+                if bidder then
+                    table.insert(bids, {
+                        bidder = bidder,
+                        bidderPlayer = DKP.GetPlayerByCharacter and DKP.GetPlayerByCharacter(bidder) or bidder,
+                        amount = tonumber(amount) or 0,
+                        isAllIn = isAllIn == "1",
+                        timestamp = tonumber(ts) or 0,
+                    })
+                end
             end
         end
+
+        -- 解析 tiedBidders
+        local tiedBidders = nil
+        if tiedStr ~= "" then
+            tiedBidders = {}
+            for tbEntry in tiedStr:gmatch("[^;]+") do
+                local name, playerName = tbEntry:match("^(.+):(.+)$")
+                if name then
+                    table.insert(tiedBidders, { name = name, playerName = playerName })
+                end
+            end
+        end
+
+        local entry = {
+            id = entryId,
+            itemLink = itemLink,
+            state = state,
+            winner = winner,
+            winnerChar = winnerChar,
+            winnerClass = winnerClass,
+            finalBid = finalBid,
+            startBid = startBid,
+            bidCount = bidCount,
+            bids = bids,
+            tiedBidders = tiedBidders,
+            timestamp = timestamp,
+            officer = officer,
+            encounterName = encounterName,
+            instanceName = instanceName,
+        }
+        table.insert(DKP.db.auctionHistory, entry)
+
+        if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
     end
-
-    local entry = {
-        id = entryId,
-        itemLink = itemLink,
-        state = state,
-        winner = winner,
-        winnerChar = winnerChar,
-        winnerClass = winnerClass,
-        finalBid = finalBid,
-        startBid = startBid,
-        bidCount = bidCount,
-        bids = bids,
-        tiedBidders = tiedBidders,
-        timestamp = timestamp,
-        officer = officer,
-        encounterName = encounterName,
-        instanceName = instanceName,
-    }
-    table.insert(DKP.db.auctionHistory, entry)
-
-    if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
 end
 
 ----------------------------------------------------------------------
@@ -792,7 +831,7 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
         elseif msgType == "ADMIN_SYNC" then
             HandleAdminSync(parts, sender)
         elseif msgType == "HISTORY_ENTRY" then
-            HandleHistoryEntry(parts, sender)
+            HandleHistoryChunk(parts, sender)
         elseif msgType == "QUERY_DKP" then
             -- 由 WhisperQuery.lua 处理
         end
