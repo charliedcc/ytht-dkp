@@ -15,6 +15,32 @@ local CHUNK_SIZE = 240  -- addon message 最大 255 byte，留余量
 local pendingSync = {}  -- sender -> { chunks = {}, expected = N }
 
 ----------------------------------------------------------------------
+-- 名字工具 + 信任检查（必须在所有 handler 之前定义）
+----------------------------------------------------------------------
+local function GetShortName(fullName)
+    if not fullName then return "" end
+    local dashPos = fullName:find("-", 1, true)
+    if dashPos then
+        return fullName:sub(1, dashPos - 1)
+    end
+    return fullName
+end
+
+local function IsTrustedSender(sender)
+    local senderShort = sender
+    local dashPos = sender:find("-", 1, true)
+    if dashPos then senderShort = sender:sub(1, dashPos - 1) end
+    if DKP.db.admins and next(DKP.db.admins) then
+        local trusted = DKP.db.admins[senderShort] == true or DKP.db.admins[sender] == true
+        if not trusted then
+            DKP.Print("|cffFF8800[调试] 不信任: " .. senderShort .. "|r")
+        end
+        return trusted
+    end
+    return true
+end
+
+----------------------------------------------------------------------
 -- 发送工具
 ----------------------------------------------------------------------
 local function GetChannel()
@@ -291,31 +317,7 @@ local function HandleSyncChunk(parts, sender)
 end
 
 ----------------------------------------------------------------------
--- 发送者信任检查（当前团队的管理员才信任）
-----------------------------------------------------------------------
-local function GetShortName(fullName)
-    if not fullName then return "" end
-    local dashPos = fullName:find("-", 1, true)  -- plain find, 不用 pattern
-    if dashPos then
-        return fullName:sub(1, dashPos - 1)
-    end
-    return fullName
-end
-
-local function IsTrustedSender(sender)
-    -- 内联提取短名（避免函数引用问题）
-    local senderShort = sender
-    local dashPos = sender:find("-", 1, true)
-    if dashPos then senderShort = sender:sub(1, dashPos - 1) end
-    -- 当前团队有 admins 列表时，发送者必须在其中（短名或全称都匹配）
-    if DKP.db.admins and next(DKP.db.admins) then
-        local trusted = DKP.db.admins[senderShort] == true or DKP.db.admins[sender] == true
-        if not trusted then
-            DKP.Print("|cffFF8800[调试] 不信任: " .. senderShort .. "|r")
-        end
-        return trusted
-    end
-    return true
+-- (GetShortName 和 IsTrustedSender 已移至文件顶部)
 end
 
 ----------------------------------------------------------------------
