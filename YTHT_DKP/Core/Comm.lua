@@ -298,45 +298,142 @@ local function HandleDKPChange(parts, sender)
 end
 
 ----------------------------------------------------------------------
--- 管理员列表广播
+-- 团队权限广播（替代旧 ADMIN_SYNC）
 ----------------------------------------------------------------------
 function DKP.BroadcastAdminSync()
     if not DKP.IsOfficer() then return end
-    local admins = DKP.db.admins
-    if not admins then return end
-    local names = {}
-    for name in pairs(admins) do
-        table.insert(names, name)
+    local team = DKP.GetCurrentTeam()
+    if not team then return end
+
+    local admins = team.admins or {}
+    local adminNames = {}
+    for name in pairs(admins) do table.insert(adminNames, name) end
+
+    -- 收集 players 里所有角色名作为成员列表
+    local charNames = {}
+    for _, data in pairs(team.players or {}) do
+        for _, char in ipairs(data.characters or {}) do
+            table.insert(charNames, char.name)
+        end
     end
-    local master = DKP.db.masterAdmin or ""
-    local msg = table.concat({ "ADMIN_SYNC", table.concat(names, ";"), master }, MSG_SEP)
+
+    local teamID = DKP.GetCurrentTeamID()
+    local teamName = team.name or "未命名"
+    local master = team.masterAdmin or ""
+
+    -- TEAM_SYNC: teamID, teamName, masterAdmin, admins(;分隔), characters(;分隔)
+    local msg = table.concat({
+        "TEAM_SYNC",
+        teamID,
+        teamName,
+        master,
+        table.concat(adminNames, ";"),
+        table.concat(charNames, ";"),
+    }, MSG_SEP)
     DKP.SendDKPMessage(msg)
 end
 
-local function HandleAdminSync(parts, sender)
-    local namesStr = parts[2] or ""
-    if namesStr == "" then return end
+local function HandleTeamSync(parts, sender)
+    local teamID = parts[2] or ""
+    local teamName = parts[3] or ""
+    local masterAdmin = parts[4] or ""
+    local adminsStr = parts[5] or ""
+    local charsStr = parts[6] or ""
 
-    local newAdmins = {}
-    for name in namesStr:gmatch("[^;]+") do
-        newAdmins[name] = true
-    end
-    local newMaster = parts[3] or ""
-    if newMaster == "" then newMaster = nil end
+    if teamID == "" or teamName == "" then return end
+    if masterAdmin == "" then masterAdmin = nil end
 
     local senderShort = sender:match("^([^%-]+)") or sender
 
-    -- 发送者必须在新列表中（说明是合法管理员发出的）
+    local newAdmins = {}
+    for name in adminsStr:gmatch("[^;]+") do newAdmins[name] = true end
+
+    -- 发送者必须在 admins 列表中
     if not newAdmins[senderShort] then return end
 
-    -- 接受管理员列表和主管理员
-    DKP.db.admins = newAdmins
-    if newMaster then
-        DKP.db.masterAdmin = newMaster
+    -- 检查我的角色名是否在成员列表中
+    local myName = DKP.playerName
+    local isMember = false
+    for name in charsStr:gmatch("[^;]+") do
+        if name == myName then isMember = true; break end
     end
-    DKP.Print("已同步管理员列表 (来自 " .. senderShort .. ")")
-    -- 刷新UI权限显示
-    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+
+    if not isMember then
+        -- 不在成员列表中，忽略
+        return
+    end
+
+    -- 检查本地是否已有这个团队
+    if DKP.db.teams[teamID] then
+        -- 已有：更新权限
+        local team = DKP.db.teams[teamID]
+        team.admins = newAdmins
+        if masterAdmin then team.masterAdmin = masterAdmin end
+        team.name = teamName
+        -- 如果当前在这个团队，刷新快捷引用
+        if DKP.db.currentTeam == teamID then
+            DKP.db.admins = team.admins
+            DKP.db.masterAdmin = team.masterAdmin
+        end
+        DKP.Print("已更新团队权限: " .. teamName .. " (来自 " .. senderShort .. ")")
+        if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+    else
+        -- 新团队：弹确认加入对话框
+        if not DKP._teamJoinDialog then
+            local d = CreateFrame("Frame", "YTHTDKPTeamJoinDialog", UIParent, "BackdropTemplate")
+            d:SetSize(340, 130)
+            d:SetPoint("CENTER", 0, 100)
+            d:SetFrameStrata("FULLSCREEN_DIALOG")
+            d:SetFrameLevel(260)
+            d:EnableMouse(true)
+            d:SetBackdrop({
+                bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+                edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+                edgeSize = 16,
+                insets = { left = 4, right = 4, top = 4, bottom = 4 },
+            })
+            d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+            d:Hide()
+            local text = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            text:SetPoint("TOP", 0, -16)
+            text:SetWidth(300)
+            d.text = text
+            local yesBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+            yesBtn:SetSize(80, 24)
+            yesBtn:SetPoint("BOTTOMLEFT", 30, 12)
+            yesBtn:SetText("加入")
+            d.yesBtn = yesBtn
+            local noBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+            noBtn:SetSize(80, 24)
+            noBtn:SetPoint("BOTTOMRIGHT", -30, 12)
+            noBtn:SetText("忽略")
+            noBtn:SetScript("OnClick", function() d:Hide() end)
+            DKP._teamJoinDialog = d
+        end
+        local d = DKP._teamJoinDialog
+        d.text:SetText("收到团队邀请\n|cff00FF00" .. teamName .. "|r\n来自 " .. senderShort .. "\n是否加入？")
+        d.yesBtn:SetScript("OnClick", function()
+            d:Hide()
+            -- 创建新团队
+            local newTeam = CopyTable(DKP.db.teams["local"])  -- 基于 local 模板
+            -- 清空数据（等待同步）
+            newTeam.players = {}
+            newTeam.log = {}
+            newTeam.auctionHistory = {}
+            newTeam.sheets = {}
+            newTeam.activities = {}
+            newTeam.currentSheet = nil
+            newTeam.name = teamName
+            newTeam.masterAdmin = masterAdmin
+            newTeam.admins = newAdmins
+            DKP.db.teams[teamID] = newTeam
+            -- 切换到新团队
+            DKP.SwitchTeam(teamID)
+            DKP.Print("已加入团队: " .. teamName)
+            DKP.Print("等待管理员同步数据...")
+        end)
+        d:Show()
+    end
 end
 
 ----------------------------------------------------------------------
@@ -931,10 +1028,23 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
             HandleSheetsChunk(parts, sender)
         elseif msgType == "SYNC_ACTIVITY" then
             HandleActivityChunk(parts, sender)
-        elseif msgType == "ADMIN_SYNC" then
-            HandleAdminSync(parts, sender)
+        elseif msgType == "ADMIN_SYNC" or msgType == "TEAM_SYNC" then
+            HandleTeamSync(parts, sender)
         elseif msgType == "HISTORY_ENTRY" then
             HandleHistoryChunk(parts, sender)
+        elseif msgType == "VERSION_QUERY" then
+            -- 回复自己的版本号
+            local reply = table.concat({ "VERSION_REPLY", DKP.version or "?", DKP.playerName or "?" }, MSG_SEP)
+            DKP.SendDKPMessage(reply)
+        elseif msgType == "VERSION_REPLY" then
+            -- 收集版本回复
+            local version = parts[2] or "?"
+            local playerName = parts[3] or senderShort
+            local senderShort2 = sender:match("^([^%-]+)") or sender
+            if DKP._versionResults then
+                DKP._versionResults[senderShort2] = { version = version, name = playerName, time = GetTime() }
+                if DKP._refreshVersionUI then DKP._refreshVersionUI() end
+            end
         elseif msgType == "QUERY_DKP" then
             -- 由 WhisperQuery.lua 处理
         end

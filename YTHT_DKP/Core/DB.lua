@@ -7,86 +7,181 @@ YTHT_DKP = YTHT_DKP or {}
 local DKP = YTHT_DKP
 
 -- 版本
-DKP.version = "0.1.0"
+DKP.version = "0.2.0"
 DKP.addonName = "YTHT_DKP"
 
 -- 插件通信前缀
 DKP.ADDON_PREFIX = "YTHTDKP"
 DKP.AUCTION_PREFIX = "YTHTDKPAuct"
 
--- 默认设置
-local defaults = {
+-- 团队数据模板（每个团队独立一套）
+local teamDefaults = {
+    name = "本地",
+    masterAdmin = nil,
+    admins = {},
     options = {
         gatherPoints = 3,
         dismissPoints = 2,
         bossKillPoints = 5,
-        -- Boss击杀加分开关 (true=启用, false=禁用，启用后击杀弹确认框)
         enableBossKillBonus = false,
-        -- 按难度配置加分 (difficultyID -> 分值, 0或nil表示该难度不加分)
-        -- WoW 难度ID: 1=普通, 2=英雄, 3=10人, 4=25人, 14=普通(新), 15=英雄(新), 16=史诗, 17=随机
-        bossKillPointsByDifficulty = {
-            -- [17] = 0,  -- 随机团: 不加分
-            -- [14] = 0,  -- 普通: 不加分
-            -- [15] = 5,  -- 英雄: 5分
-            -- [16] = 10, -- 史诗: 10分
-        },
-        -- 开荒额外加分 (首杀额外加分)
+        bossKillPointsByDifficulty = {},
         progressionBonusPoints = 0,
-        -- 擦屁股分 (每次团灭额外加分, 击杀时结算)
         wipeBonus = 0,
-        -- 擦屁股分上限 (最多计算N次团灭)
         wipeBonusMax = 10,
         defaultStartingBid = 1,
-        -- 按副本难度的起拍价 (difficultyID -> 起拍DKP)
         defaultBidByDifficulty = {
-            [14] = 1,  -- 普通: 1 DKP
-            [15] = 3,  -- 英雄: 3 DKP
-            [16] = 5,  -- 史诗: 5 DKP
-            [17] = 1,  -- 随机团: 1 DKP
+            [14] = 1,
+            [15] = 3,
+            [16] = 5,
+            [17] = 1,
         },
         auctionDuration = 300,
         minBidIncrement = 1,
         auctionExtendTime = 10,
-        -- 装备品质过滤: 2=绿色及以上, 3=蓝色及以上, 4=紫色及以上
         minItemQuality = 2,
     },
-    -- DKP 玩家数据
     players = {},
-    -- DKP 审计日志
     log = {},
-    -- 当前活动状态
     session = {
         active = false,
         gathered = false,
-        startTime = nil,    -- 活动开始时间（集合/session start 时记录）
-        bossKills = {},     -- encounterID -> true (本次活动已加分的boss)
-        wipeCounts = {},    -- encounterID -> 团灭次数
-        firstKills = {},    -- encounterID -> true (历史首杀记录，不随session重置)
+        startTime = nil,
+        bossKills = {},
+        wipeCounts = {},
+        firstKills = {},
     },
-    -- 管理员列表 (key=角色名, value=true)
-    admins = {},
-    -- 主管理员（角色名，不可被其他人移除/覆盖）
-    masterAdmin = nil,
-    -- 拍卖历史
     auctionHistory = {},
-    -- 表格数据：按副本 -> Boss -> 装备记录
-    -- sheets[instanceName] = {
-    --     bosses = {
-    --         [1] = { name = "Boss名", encounterID = 12345, items = {
-    --             [1] = { link = "itemLink", winner = "", dkp = 0, rollID = 0 },
-    --         }},
-    --     },
-    -- }
     sheets = {},
-    -- 当前查看的副本
     currentSheet = nil,
-    -- 活动归档
     activities = {},
-    -- UI位置
+}
+
+-- 全局默认值（不随团队切换）
+local globalDefaults = {
+    teams = {},
+    currentTeam = "local",
     point = {},
 }
 
+----------------------------------------------------------------------
+-- 填充默认值工具
+----------------------------------------------------------------------
+local function FillDefaults(target, defaults)
+    for k, v in pairs(defaults) do
+        if target[k] == nil then
+            if type(v) == "table" then
+                target[k] = CopyTable(v)
+            else
+                target[k] = v
+            end
+        elseif type(v) == "table" and type(target[k]) == "table" then
+            for sk, sv in pairs(v) do
+                if target[k][sk] == nil then
+                    if type(sv) == "table" then
+                        target[k][sk] = CopyTable(sv)
+                    else
+                        target[k][sk] = sv
+                    end
+                end
+            end
+        end
+    end
+end
+
+----------------------------------------------------------------------
+-- 团队切换（兼容层：让现有代码的 DKP.db.players 等继续工作）
+----------------------------------------------------------------------
+function DKP.SwitchTeam(teamID)
+    if not DKP.db or not DKP.db.teams then return end
+    local team = DKP.db.teams[teamID]
+    if not team then
+        DKP.Print("团队不存在: " .. tostring(teamID))
+        return
+    end
+
+    DKP.db.currentTeam = teamID
+
+    -- 设置快捷引用（现有代码无需修改）
+    DKP.db.players = team.players
+    DKP.db.log = team.log
+    DKP.db.auctionHistory = team.auctionHistory
+    DKP.db.sheets = team.sheets
+    DKP.db.options = team.options
+    DKP.db.session = team.session
+    DKP.db.admins = team.admins
+    DKP.db.masterAdmin = team.masterAdmin
+    DKP.db.activities = team.activities
+    DKP.db.currentSheet = team.currentSheet
+
+    -- 刷新所有UI
+    if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+    if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+
+    if DKP.MainFrame then
+        if DKP.MainFrame.instanceText then
+            DKP.MainFrame.instanceText:SetText(DKP.db.currentSheet or "")
+        end
+        if DKP.MainFrame.teamBtn and DKP.MainFrame.teamBtn.text then
+            DKP.MainFrame.teamBtn.text:SetText(team.name or teamID)
+        end
+    end
+end
+
+-- 获取当前团队数据
+function DKP.GetCurrentTeam()
+    if DKP.db and DKP.db.teams and DKP.db.currentTeam then
+        return DKP.db.teams[DKP.db.currentTeam]
+    end
+    return nil
+end
+
+-- 获取当前团队名
+function DKP.GetCurrentTeamName()
+    local team = DKP.GetCurrentTeam()
+    return team and team.name or "本地"
+end
+
+-- 获取当前团队ID
+function DKP.GetCurrentTeamID()
+    return DKP.db and DKP.db.currentTeam or "local"
+end
+
+----------------------------------------------------------------------
+-- 数据迁移：从旧格式迁移到团队格式
+----------------------------------------------------------------------
+local function MigrateToTeams(db)
+    -- 如果已经有 teams 结构，跳过迁移
+    if db.teams and next(db.teams) then return end
+
+    db.teams = {}
+
+    -- 把现有数据迁移到 "local" 团队
+    local localTeam = CopyTable(teamDefaults)
+    localTeam.name = "本地"
+
+    -- 迁移各字段
+    if db.players and next(db.players) then localTeam.players = db.players end
+    if db.log and #db.log > 0 then localTeam.log = db.log end
+    if db.auctionHistory and #db.auctionHistory > 0 then localTeam.auctionHistory = db.auctionHistory end
+    if db.sheets and next(db.sheets) then localTeam.sheets = db.sheets end
+    if db.options then localTeam.options = db.options end
+    if db.session then localTeam.session = db.session end
+    if db.admins and next(db.admins) then localTeam.admins = db.admins end
+    if db.masterAdmin then localTeam.masterAdmin = db.masterAdmin end
+    if db.activities and #db.activities > 0 then localTeam.activities = db.activities end
+    if db.currentSheet then localTeam.currentSheet = db.currentSheet end
+
+    db.teams["local"] = localTeam
+    db.currentTeam = "local"
+
+    -- 清理旧字段（快捷引用会在 SwitchTeam 时重建）
+    -- 不删除，让 SwitchTeam 覆盖它们
+end
+
+----------------------------------------------------------------------
 -- 初始化 SavedVariables
+----------------------------------------------------------------------
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("ADDON_LOADED")
 initFrame:RegisterEvent("PLAYER_LOGOUT")
@@ -96,28 +191,27 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
         if not YTHT_DKP_DB then
             YTHT_DKP_DB = {}
         end
-        -- 填充默认值（包括嵌套table的子字段）
-        for k, v in pairs(defaults) do
-            if YTHT_DKP_DB[k] == nil then
-                if type(v) == "table" then
-                    YTHT_DKP_DB[k] = CopyTable(v)
-                else
-                    YTHT_DKP_DB[k] = v
-                end
-            elseif type(v) == "table" and type(YTHT_DKP_DB[k]) == "table" then
-                -- 填充子表中缺失的字段（用于版本升级添加新选项）
-                for sk, sv in pairs(v) do
-                    if YTHT_DKP_DB[k][sk] == nil then
-                        if type(sv) == "table" then
-                            YTHT_DKP_DB[k][sk] = CopyTable(sv)
-                        else
-                            YTHT_DKP_DB[k][sk] = sv
-                        end
-                    end
-                end
-            end
-        end
+
+        -- 填充全局默认值
+        FillDefaults(YTHT_DKP_DB, globalDefaults)
+
         DKP.db = YTHT_DKP_DB
+
+        -- 数据迁移（旧版本 → 团队版本）
+        MigrateToTeams(DKP.db)
+
+        -- 确保 local 团队存在
+        if not DKP.db.teams["local"] then
+            DKP.db.teams["local"] = CopyTable(teamDefaults)
+            DKP.db.teams["local"].name = "本地"
+        end
+
+        -- 填充团队默认值
+        for _, team in pairs(DKP.db.teams) do
+            FillDefaults(team, teamDefaults)
+            FillDefaults(team.options, teamDefaults.options)
+            FillDefaults(team.session, teamDefaults.session)
+        end
 
         -- 注册插件通信前缀
         C_ChatInfo.RegisterAddonMessagePrefix(DKP.ADDON_PREFIX)
@@ -127,6 +221,9 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
         DKP.playerName = UnitName("player")
         DKP.playerFullName = DKP.playerName .. "-" .. GetRealmName()
         DKP.playerClass = select(2, UnitClass("player"))
+
+        -- 切换到当前团队（建立快捷引用）
+        DKP.SwitchTeam(DKP.db.currentTeam or "local")
 
         -- 触发初始化回调
         if DKP.OnInitialized then
@@ -140,6 +237,11 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
         if DKP.MainFrame then
             local point, _, relPoint, x, y = DKP.MainFrame:GetPoint()
             DKP.db.point = { point, "UIParent", relPoint, x, y }
+        end
+        -- 保存当前团队的 currentSheet
+        local team = DKP.GetCurrentTeam()
+        if team then
+            team.currentSheet = DKP.db.currentSheet
         end
     end
 end)

@@ -103,9 +103,96 @@ local function CreateMainFrame()
     title:SetTextColor(TITLE_COLOR.r, TITLE_COLOR.g, TITLE_COLOR.b)
     f.title = title
 
+    -- 团队切换按钮
+    local teamBtn = CreateFrame("Button", nil, f)
+    teamBtn:SetSize(120, 20)
+    teamBtn:SetPoint("LEFT", title, "RIGHT", 10, 0)
+    local teamBtnBg = teamBtn:CreateTexture(nil, "BACKGROUND")
+    teamBtnBg:SetAllPoints()
+    teamBtnBg:SetColorTexture(0.15, 0.15, 0.2, 0.8)
+    local teamBtnText = teamBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    teamBtnText:SetPoint("LEFT", 6, 0)
+    teamBtnText:SetTextColor(0.3, 1, 0.3)
+    teamBtn.text = teamBtnText
+    local teamBtnArrow = teamBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    teamBtnArrow:SetPoint("RIGHT", -4, 0)
+    teamBtnArrow:SetText("▼")
+    teamBtnArrow:SetTextColor(0.6, 0.6, 0.6)
+    f.teamBtn = teamBtn
+
+    -- 团队切换下拉菜单
+    teamBtn:SetScript("OnClick", function(self)
+        if not DKP.db or not DKP.db.teams then return end
+        -- 简易下拉
+        if DKP._teamDropdown and DKP._teamDropdown:IsShown() then
+            DKP._teamDropdown:Hide()
+            return
+        end
+        if not DKP._teamDropdown then
+            local dd = CreateFrame("Frame", "YTHTDKPTeamDropdown", UIParent, "BackdropTemplate")
+            dd:SetFrameStrata("FULLSCREEN_DIALOG")
+            dd:SetFrameLevel(300)
+            dd:EnableMouse(true)
+            dd:SetBackdrop({
+                bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+                edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+                edgeSize = 12,
+                insets = { left = 3, right = 3, top = 3, bottom = 3 },
+            })
+            dd:SetBackdropColor(0.08, 0.08, 0.12, 0.95)
+            dd:Hide()
+            dd.buttons = {}
+            DKP._teamDropdown = dd
+        end
+        local dd = DKP._teamDropdown
+        -- 清除旧按钮
+        for _, btn in ipairs(dd.buttons) do btn:Hide() end
+        dd.buttons = {}
+
+        local yOff = -4
+        local maxW = 120
+        for teamID, team in pairs(DKP.db.teams) do
+            local btn = CreateFrame("Button", nil, dd)
+            btn:SetHeight(20)
+            btn:SetPoint("TOPLEFT", 4, yOff)
+            btn:SetPoint("RIGHT", dd, "RIGHT", -4, 0)
+            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0.1)
+            local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            text:SetPoint("LEFT", 6, 0)
+            local displayName = team.name or teamID
+            if teamID == DKP.db.currentTeam then
+                text:SetText("|cff00FF00► " .. displayName .. "|r")
+            else
+                text:SetText("  " .. displayName)
+                text:SetTextColor(0.8, 0.8, 0.8)
+            end
+            local w = text:GetStringWidth() + 20
+            if w > maxW then maxW = w end
+            btn:SetScript("OnClick", function()
+                dd:Hide()
+                DKP.SwitchTeam(teamID)
+                teamBtnText:SetText(team.name or teamID)
+                DKP.Print("已切换到团队: " .. (team.name or teamID))
+            end)
+            table.insert(dd.buttons, btn)
+            yOff = yOff - 20
+        end
+        dd:SetSize(maxW + 8, math.abs(yOff) + 8)
+        dd:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -2)
+        dd:Show()
+        -- 点击其他地方关闭
+        dd:SetScript("OnUpdate", function(self)
+            if not self:IsMouseOver() and not teamBtn:IsMouseOver() then
+                if IsMouseButtonDown() then self:Hide() end
+            end
+        end)
+    end)
+
     -- 副本名称
     local instanceText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    instanceText:SetPoint("LEFT", title, "RIGHT", 15, 0)
+    instanceText:SetPoint("LEFT", teamBtn, "RIGHT", 10, 0)
     instanceText:SetText("")
     instanceText:SetTextColor(0.8, 0.8, 0.8)
     f.instanceText = instanceText
@@ -1239,15 +1326,19 @@ end
 -- 初始化
 ----------------------------------------------------------------------
 function DKP.OnInitialized()
-    -- 初始化管理员列表
-    -- 每个人默认成为自己的管理员（可以独立使用插件）
-    -- 在接受到其他管理员的 ADMIN_SYNC 时会覆盖本地权限
-    if not DKP.db.admins then DKP.db.admins = {} end
-    if not next(DKP.db.admins) then
-        DKP.db.admins[DKP.playerName] = true
-    end
-    if not DKP.db.masterAdmin then
-        DKP.db.masterAdmin = DKP.playerName
+    -- 确保当前团队（local）有管理员
+    local team = DKP.GetCurrentTeam()
+    if team then
+        if not team.admins then team.admins = {} end
+        if not next(team.admins) then
+            team.admins[DKP.playerName] = true
+        end
+        if not team.masterAdmin then
+            team.masterAdmin = DKP.playerName
+        end
+        -- 同步快捷引用
+        DKP.db.admins = team.admins
+        DKP.db.masterAdmin = team.masterAdmin
     end
 
     -- 创建主框架

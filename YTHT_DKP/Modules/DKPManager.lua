@@ -2104,6 +2104,192 @@ end
 ----------------------------------------------------------------------
 local exportDialog
 
+----------------------------------------------------------------------
+-- 对话框：插件版本查看
+----------------------------------------------------------------------
+local versionDialog
+
+function DKP.ShowVersionDialog()
+    if not IsInGroup() and not IsInRaid() then
+        DKP.Print("需要在队伍或团队中才能查询版本")
+        return
+    end
+
+    if not versionDialog then
+        local d = CreateDialogFrame("YTHTDKPVersionDialog", 420, 360, "团队插件版本")
+
+        local closeBtn = CreateFrame("Button", nil, d, "UIPanelCloseButton")
+        closeBtn:SetPoint("TOPRIGHT", -2, -2)
+
+        local hint = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        hint:SetPoint("TOPLEFT", 16, -38)
+        hint:SetText("查询团队成员的插件安装情况...")
+        hint:SetTextColor(0.6, 0.6, 0.6)
+        d.hint = hint
+
+        -- 表头
+        local headerBg = d:CreateTexture(nil, "ARTWORK")
+        headerBg:SetPoint("TOPLEFT", 12, -54)
+        headerBg:SetPoint("TOPRIGHT", -12, -54)
+        headerBg:SetHeight(18)
+        headerBg:SetColorTexture(0.08, 0.08, 0.12, 0.95)
+
+        local h1 = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        h1:SetPoint("TOPLEFT", headerBg, "TOPLEFT", 4, 0)
+        h1:SetText("角色名")
+        h1:SetTextColor(0.6, 0.6, 0.6)
+        local h2 = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        h2:SetPoint("TOPLEFT", headerBg, "TOPLEFT", 160, 0)
+        h2:SetText("版本")
+        h2:SetTextColor(0.6, 0.6, 0.6)
+        local h3 = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        h3:SetPoint("TOPLEFT", headerBg, "TOPLEFT", 280, 0)
+        h3:SetText("状态")
+        h3:SetTextColor(0.6, 0.6, 0.6)
+
+        -- 滚动区
+        local sf = CreateFrame("ScrollFrame", "YTHTDKPVersionScroll", d, "UIPanelScrollFrameTemplate")
+        sf:SetPoint("TOPLEFT", 12, -74)
+        sf:SetPoint("BOTTOMRIGHT", -32, 50)
+
+        local sc = CreateFrame("Frame", "YTHTDKPVersionScrollChild", sf)
+        sc:SetWidth(370)
+        sc:SetHeight(1)
+        sf:SetScrollChild(sc)
+        d.scrollChild = sc
+        d.rows = {}
+
+        -- 刷新按钮
+        local refreshBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        refreshBtn:SetSize(80, 24)
+        refreshBtn:SetPoint("BOTTOMLEFT", 16, 14)
+        refreshBtn:SetText("刷新查询")
+        d.refreshBtn = refreshBtn
+
+        local closeFooter = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        closeFooter:SetSize(80, 24)
+        closeFooter:SetPoint("BOTTOMRIGHT", -16, 14)
+        closeFooter:SetText("关闭")
+        closeFooter:SetScript("OnClick", function() d:Hide() end)
+
+        versionDialog = d
+    end
+
+    local d = versionDialog
+
+    -- 初始化结果
+    DKP._versionResults = {}
+    -- 自己先加入
+    DKP._versionResults[DKP.playerName] = { version = DKP.version, name = DKP.playerName, time = GetTime() }
+
+    -- 刷新函数
+    local function RefreshList()
+        local sc = d.scrollChild
+        for _, row in ipairs(d.rows) do row:Hide() end
+
+        -- 收集团队/队伍成员
+        local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
+        local yOff = 0
+        local idx = 0
+
+        for _, m in ipairs(members) do
+            idx = idx + 1
+            local row = d.rows[idx]
+            if not row then
+                row = CreateFrame("Frame", nil, sc)
+                row:SetSize(370, 20)
+                local bg = row:CreateTexture(nil, "BACKGROUND")
+                bg:SetAllPoints()
+                row.bg = bg
+                local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                nameText:SetPoint("LEFT", 4, 0)
+                nameText:SetWidth(154)
+                nameText:SetJustifyH("LEFT")
+                row.nameText = nameText
+                local verText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                verText:SetPoint("LEFT", 160, 0)
+                verText:SetWidth(118)
+                verText:SetJustifyH("LEFT")
+                row.verText = verText
+                local statusText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                statusText:SetPoint("LEFT", 280, 0)
+                statusText:SetWidth(80)
+                statusText:SetJustifyH("LEFT")
+                row.statusText = statusText
+                d.rows[idx] = row
+            end
+
+            row:SetPoint("TOPLEFT", sc, "TOPLEFT", 0, yOff)
+            row.bg:SetColorTexture((idx % 2 == 0) and 0.13 or 0.10, (idx % 2 == 0) and 0.13 or 0.10, (idx % 2 == 0) and 0.18 or 0.15, 0.7)
+
+            local shortName = m.shortName or m.name or "?"
+            row.nameText:SetText(shortName)
+            row.nameText:SetTextColor(1, 0.82, 0)
+
+            local result = DKP._versionResults[shortName]
+            if result then
+                row.verText:SetText("v" .. result.version)
+                if result.version == DKP.version then
+                    row.verText:SetTextColor(0.3, 1, 0.3)
+                    row.statusText:SetText("|cff00FF00已安装|r")
+                else
+                    row.verText:SetTextColor(1, 0.8, 0)
+                    row.statusText:SetText("|cffFFCC00版本不同|r")
+                end
+            else
+                row.verText:SetText("")
+                row.statusText:SetText("|cff888888等待回复...|r")
+            end
+
+            row:Show()
+            yOff = yOff - 22
+        end
+
+        sc:SetHeight(math.abs(yOff) + 10)
+        d.hint:SetText("团队成员: " .. #members .. " 人  |  已回复: " ..
+            (function() local c = 0; for _ in pairs(DKP._versionResults) do c = c + 1 end; return c end)() .. " 人")
+    end
+
+    DKP._refreshVersionUI = RefreshList
+
+    -- 发送查询
+    local function SendQuery()
+        DKP.SendDKPMessage("VERSION_QUERY")
+        RefreshList()
+        -- 3秒后标记未回复的为未安装
+        C_Timer.After(5, function()
+            if d:IsShown() then
+                local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
+                for _, m in ipairs(members) do
+                    local sn = m.shortName or m.name
+                    if sn and not DKP._versionResults[sn] then
+                        DKP._versionResults[sn] = nil  -- 保持 nil = 未安装
+                    end
+                end
+                RefreshList()
+                -- 更新未回复的状态
+                for _, row in ipairs(d.rows) do
+                    if row:IsShown() and row.statusText:GetText() == "|cff888888等待回复...|r" then
+                        row.statusText:SetText("|cffFF4444未安装|r")
+                    end
+                end
+            end
+        end)
+    end
+
+    d.refreshBtn:SetScript("OnClick", function()
+        DKP._versionResults = {}
+        DKP._versionResults[DKP.playerName] = { version = DKP.version, name = DKP.playerName, time = GetTime() }
+        SendQuery()
+    end)
+
+    SendQuery()
+    d:Show()
+end
+
+----------------------------------------------------------------------
+-- 对话框：导出数据
+----------------------------------------------------------------------
 function DKP.ShowExportDialog(preloadText)
     if not exportDialog then
         local d = CreateDialogFrame("YTHTDKPExportDialog", 580, 460, "导出数据")
@@ -3264,6 +3450,15 @@ function DKP.InitDKPPanel()
     syncRecordBtn:SetScript("OnClick", function()
         if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
         if DKP.BroadcastActivityData then DKP.BroadcastActivityData() end
+    end)
+
+    -- 版本查看按钮（所有人可用）
+    local versionBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    versionBtn:SetSize(72, 22)
+    versionBtn:SetPoint("LEFT", syncRecordBtn, "RIGHT", 8, 0)
+    versionBtn:SetText("插件版本")
+    versionBtn:SetScript("OnClick", function()
+        DKP.ShowVersionDialog()
     end)
 
     -- 管理员专用按钮列表（RefreshDKPUI 时根据权限显示/隐藏）
