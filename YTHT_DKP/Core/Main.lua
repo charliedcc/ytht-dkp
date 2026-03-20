@@ -206,13 +206,15 @@ local function CreateMainFrame()
             DKP.ShowCreateTeamDialog()
         end)
 
-        -- 编辑当前团队
-        AddDropdownItem("|cffFFCC00✎ 编辑团队名称|r", nil, function()
-            DKP.ShowRenameTeamDialog()
-        end)
+        -- 编辑当前团队（仅主管理员）
+        if DKP.db.masterAdmin and DKP.db.masterAdmin == DKP.playerName then
+            AddDropdownItem("|cffFFCC00✎ 编辑团队名称|r", nil, function()
+                DKP.ShowRenameTeamDialog()
+            end)
+        end
 
-        -- 删除当前团队（非local）
-        if DKP.db.currentTeam ~= "local" then
+        -- 删除当前团队（非local，仅主管理员）
+        if DKP.db.currentTeam ~= "local" and DKP.db.masterAdmin and DKP.db.masterAdmin == DKP.playerName then
             AddDropdownItem("|cffFF4444✕ 删除当前团队|r", nil, function()
                 local teamID = DKP.db.currentTeam
                 local teamName = DKP.GetCurrentTeamName()
@@ -1259,6 +1261,8 @@ function DKP.ShowRenameTeamDialog()
             if not name or name == "" then return end
             DKP.RenameTeam(DKP.db.currentTeam, name)
             DKP.Print("团队已重命名为: " .. name)
+            -- 广播给所有团队成员
+            if DKP.BroadcastAdminSync then DKP.BroadcastAdminSync() end
             d:Hide()
         end)
 

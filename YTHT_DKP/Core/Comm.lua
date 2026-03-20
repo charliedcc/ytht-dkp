@@ -240,13 +240,26 @@ local function HandleSyncChunk(parts, sender)
 
         -- 信任检查
         DKP.Print("|cff888888[调试] SYNC_FULL 收到 " .. #text .. " 字节, 来自 " .. sender .. "|r")
-        if not IsTrustedSender(sender) then
-            DKP.Print("|cffFF8800[调试] SYNC_FULL 被拒绝: 发送者不受信任|r")
+        DKP.Print("|cff888888[调试] 当前团队: " .. tostring(DKP.db.currentTeam) .. " admins类型: " .. type(DKP.db.admins) .. "|r")
+        if DKP.db.admins then
+            local aList = {}
+            for n in pairs(DKP.db.admins) do table.insert(aList, n) end
+            DKP.Print("|cff888888[调试] admins: " .. table.concat(aList, ",") .. "|r")
+        end
+
+        local trusted = IsTrustedSender(sender)
+        DKP.Print("|cff888888[调试] IsTrustedSender结果: " .. tostring(trusted) .. "|r")
+        if not trusted then
+            DKP.Print("|cffFF8800[调试] SYNC_FULL 被拒绝|r")
             return
         end
 
         -- 应用同步数据
+        DKP.Print("|cff888888[调试] 开始解析 players...|r")
         local playersData = DeserializePlayers(text)
+        local pCount = 0
+        for _ in pairs(playersData) do pCount = pCount + 1 end
+        DKP.Print("|cff888888[调试] 解析出 " .. pCount .. " 个玩家|r")
         if next(playersData) then
             for name, data in pairs(playersData) do
                 if not DKP.db.players[name] then
