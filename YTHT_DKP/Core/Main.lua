@@ -853,19 +853,20 @@ function DKP.RefreshTableUI()
             instHeader:Show()
             yOffset = yOffset - 22
 
-            for bossIdx = 1, #bosses do
+            -- 倒序显示 boss（最后击杀的在最前面，序号保持击杀顺序）
+            for bossIdx = #bosses, 1, -1 do
                 local bossData = bosses[bossIdx]
                 bossFrameIndex = bossFrameIndex + 1
 
+                local bossNum = bossData.bossIndex or bossIdx
                 local bossSection = f.bossFrames[bossFrameIndex]
                 if not bossSection then
-                    bossSection = CreateBossSection(scrollChild, bossIdx, bossData.name, yOffset)
+                    bossSection = CreateBossSection(scrollChild, bossNum, bossData.name, yOffset)
                     f.bossFrames[bossFrameIndex] = bossSection
-                else
-                    bossSection:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
-                    bossSection.bossLabel:SetText(bossData.name)
-                    bossSection:Show()
                 end
+                bossSection:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
+                bossSection.bossLabel:SetText(bossNum .. ". " .. bossData.name)
+                bossSection:Show()
 
                 -- 击杀状态
                 if bossData.killed then
@@ -955,6 +956,7 @@ function DKP.AddBossToSheet(instanceName, bossName, encounterID)
         encounterID = encounterID,
         killed = false,
         items = {},
+        bossIndex = #sheet.bosses + 1,  -- 击杀顺序序号
     }
     table.insert(sheet.bosses, bossData)
     DKP.Print("添加Boss: " .. bossName)
