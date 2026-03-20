@@ -346,26 +346,63 @@ function DKP.BroadcastAdminSync()
     local teamName = team.name or "未命名"
     local master = team.masterAdmin or ""
 
-    -- TEAM_SYNC: teamID, teamName, masterAdmin, admins(;分隔), characters(;分隔)
-    local msg = table.concat({
-        "TEAM_SYNC",
+    -- TEAM_SYNC: 可能超 255 字节（角色名多时），用 chunked 发送
+    -- 数据用 \031 分隔（不用 \t 因为那是 chunk header 分隔符）
+    local data = table.concat({
         teamID,
         teamName,
         master,
         table.concat(adminNames, ";"),
         table.concat(charNames, ";"),
-    }, MSG_SEP)
-    DKP.SendDKPMessage(msg)
+    }, "\031")
+
+    local channel = GetChannel()
+    if channel then
+        DKP.Print("|cff888888[调试] 发送TEAM_SYNC: " .. #data .. " 字节, " .. #charNames .. " 个角色|r")
+        SendChunked(DKP.ADDON_PREFIX, "TEAM_SYNC", data, channel)
+    end
 end
 
-local function HandleTeamSync(parts, sender)
-    local teamID = parts[2] or ""
-    local teamName = parts[3] or ""
-    local masterAdmin = parts[4] or ""
-    local adminsStr = parts[5] or ""
-    local charsStr = parts[6] or ""
+local pendingTeamSync = {}
 
-    if teamID == "" or teamName == "" then return end
+local function HandleTeamSync(parts, sender)
+    -- chunked 接收
+    local chunkIndex = tonumber(parts[2])
+    local totalChunks = tonumber(parts[3])
+    local chunkData = parts[4] or ""
+    if not chunkIndex or not totalChunks then return end
+
+    local sKey = sender .. "_team"
+    if not pendingTeamSync[sKey] then
+        pendingTeamSync[sKey] = { chunks = {}, expected = totalChunks }
+    end
+    local sync = pendingTeamSync[sKey]
+    sync.chunks[chunkIndex] = chunkData
+
+    local received = 0
+    for _ in pairs(sync.chunks) do received = received + 1 end
+
+    if received < sync.expected then return end
+
+    local fullData = {}
+    for i = 1, sync.expected do
+        table.insert(fullData, sync.chunks[i] or "")
+    end
+    local data = table.concat(fullData)
+    pendingTeamSync[sKey] = nil
+
+    -- 解析 \031 分隔的字段
+    local f = { strsplit("\031", data) }
+    local teamID = f[1] or ""
+    local teamName = f[2] or ""
+    local masterAdmin = f[3] or ""
+    local adminsStr = f[4] or ""
+    local charsStr = f[5] or ""
+
+    if teamID == "" or teamName == "" then
+        DKP.Print("|cffFF8800[调试] TEAM_SYNC 数据不完整|r")
+        return
+    end
     if masterAdmin == "" then masterAdmin = nil end
 
     local senderShort = sender:match("^([^%-]+)") or sender
@@ -374,7 +411,10 @@ local function HandleTeamSync(parts, sender)
     for name in adminsStr:gmatch("[^;]+") do newAdmins[name] = true end
 
     -- 发送者必须在 admins 列表中
-    if not newAdmins[senderShort] then return end
+    if not newAdmins[senderShort] then
+        DKP.Print("|cffFF8800[调试] TEAM_SYNC 发送者 " .. senderShort .. " 不在admins中|r")
+        return
+    end
 
     -- 检查我的角色名是否在成员列表中
     local myName = DKP.playerName
@@ -384,9 +424,11 @@ local function HandleTeamSync(parts, sender)
     end
 
     if not isMember then
-        -- 不在成员列表中，忽略
+        DKP.Print("|cff888888[调试] TEAM_SYNC: 我(" .. myName .. ")不在成员列表中|r")
         return
     end
+
+    DKP.Print("|cff888888[调试] TEAM_SYNC 收到: 团队=" .. teamName .. " 发送者=" .. senderShort .. "|r")
 
     -- 检查本地是否已有这个团队
     if DKP.db.teams[teamID] then

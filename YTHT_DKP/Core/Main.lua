@@ -1645,7 +1645,7 @@ function DKP.CreateMiniButton()
 
     local btn = CreateFrame("Button", "YTHTDKPMiniButton", UIParent)
     btn:SetSize(42, 20)
-    btn:SetPoint("TOP", UIParent, "TOP", 0, -2)
+    btn:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     btn:SetMovable(true)
     btn:EnableMouse(true)
     btn:SetClampedToScreen(true)
