@@ -213,8 +213,8 @@ local function CreateMainFrame()
             end)
         end
 
-        -- 删除当前团队（非local，仅主管理员）
-        if DKP.db.currentTeam ~= "local" and DKP.db.masterAdmin and DKP.db.masterAdmin == DKP.playerName then
+        -- 删除当前团队（非local，所有人可删自己本地的团队数据）
+        if DKP.db.currentTeam ~= "local" then
             AddDropdownItem("|cffFF4444✕ 删除当前团队|r", nil, function()
                 local teamID = DKP.db.currentTeam
                 local teamName = DKP.GetCurrentTeamName()
