@@ -2410,7 +2410,12 @@ function DKP.ShowExportDialog(preloadText)
                 auctionHistory = DKP.db.auctionHistory,
                 sheets = DKP.db.sheets,
             }
-            d.editBox:SetText(DKP.SerializeActivity(act))
+            local ok, result = pcall(DKP.SerializeActivity, act)
+            if ok then
+                d.editBox:SetText(result or "")
+            else
+                d.editBox:SetText("序列化失败: " .. tostring(result))
+            end
             d.editBox:HighlightText()
             d.editBox:SetFocus()
         end)

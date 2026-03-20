@@ -33,7 +33,6 @@ local function IsTrustedSender(sender)
     if DKP.db.admins and next(DKP.db.admins) then
         local trusted = DKP.db.admins[senderShort] == true or DKP.db.admins[sender] == true
         if not trusted then
-            DKP.Print("|cffFF8800[调试] 不信任: " .. senderShort .. "|r")
         end
         return trusted
     end
@@ -265,27 +264,10 @@ local function HandleSyncChunk(parts, sender)
         pendingSync[sender] = nil
 
         -- 信任检查
-        DKP.Print("|cff888888[调试] SYNC_FULL 收到 " .. #text .. " 字节, 来自 " .. sender .. "|r")
-        DKP.Print("|cff888888[调试] 当前团队: " .. tostring(DKP.db.currentTeam) .. " admins类型: " .. type(DKP.db.admins) .. "|r")
-        if DKP.db.admins then
-            local aList = {}
-            for n in pairs(DKP.db.admins) do table.insert(aList, n) end
-            DKP.Print("|cff888888[调试] admins: " .. table.concat(aList, ",") .. "|r")
-        end
-
-        local trusted = IsTrustedSender(sender)
-        DKP.Print("|cff888888[调试] IsTrustedSender结果: " .. tostring(trusted) .. "|r")
-        if not trusted then
-            DKP.Print("|cffFF8800[调试] SYNC_FULL 被拒绝|r")
-            return
-        end
+        if not IsTrustedSender(sender) then return end
 
         -- 应用同步数据
-        DKP.Print("|cff888888[调试] 开始解析 players...|r")
         local playersData = DeserializePlayers(text)
-        local pCount = 0
-        for _ in pairs(playersData) do pCount = pCount + 1 end
-        DKP.Print("|cff888888[调试] 解析出 " .. pCount .. " 个玩家|r")
         if next(playersData) then
             for name, data in pairs(playersData) do
                 if not DKP.db.players[name] then
@@ -392,7 +374,6 @@ function DKP.BroadcastAdminSync()
 
     local channel = GetChannel()
     if channel then
-        DKP.Print("|cff888888[调试] 发送TEAM_SYNC: " .. #data .. " 字节, " .. #charNames .. " 个角色|r")
         SendChunked(DKP.ADDON_PREFIX, "TEAM_SYNC", data, channel)
     end
 end
@@ -434,7 +415,6 @@ local function HandleTeamSync(parts, sender)
     local charsStr = f[5] or ""
 
     if teamID == "" or teamName == "" then
-        DKP.Print("|cffFF8800[调试] TEAM_SYNC 数据不完整|r")
         return
     end
     if masterAdmin == "" then masterAdmin = nil end
@@ -446,7 +426,6 @@ local function HandleTeamSync(parts, sender)
 
     -- 发送者必须在 admins 列表中
     if not newAdmins[senderShort] then
-        DKP.Print("|cffFF8800[调试] TEAM_SYNC 发送者 " .. senderShort .. " 不在admins中|r")
         return
     end
 
@@ -462,11 +441,9 @@ local function HandleTeamSync(parts, sender)
     end
 
     if not isMember then
-        DKP.Print("|cff888888[调试] TEAM_SYNC: 我(" .. myName .. ")不在成员列表中|r")
         return
     end
 
-    DKP.Print("|cff888888[调试] TEAM_SYNC 收到: 团队=" .. teamName .. " 发送者=" .. senderShort .. "|r")
 
     -- 检查本地是否已有这个团队
     if DKP.db.teams[teamID] then
@@ -1045,7 +1022,6 @@ local function HandleActivityChunk(parts, sender)
         local text = table.concat(fullData)
         pendingActivitySync[sKey] = nil
 
-        DKP.Print("|cff888888[调试] 活动数据重组完成: " .. #text .. " 字节|r")
 
         if not IsTrustedSender(sender) then return end
 
@@ -1066,7 +1042,6 @@ local function HandleActivityChunk(parts, sender)
                 if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
                 if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
             else
-                DKP.Print("|cffFF4444[调试] DeserializeActivity 返回 nil|r")
             end
         end
     end
