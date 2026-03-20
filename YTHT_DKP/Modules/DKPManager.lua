@@ -942,11 +942,17 @@ local importDialog
 
 local IMPORT_MODES = {
     {
+        key = "activity",
+        label = "活动记录",
+        hint = "粘贴从「导出 → 活动记录」复制的完整数据\n"
+            .. "包含DKP/操作日志/拍卖记录/拍卖表，导入后存为归档活动\n"
+            .. "格式以 [YTHT_DKP_ACTIVITY_V1] 开头",
+    },
+    {
         key = "dkp",
         label = "DKP数据",
         hint = "格式: 玩家名,DKP[,角色名:职业,...]  每行一条\n"
             .. "例: 张三,150,猎人角色:HUNTER,战士角色:WARRIOR\n"
-            .. "例: 李四,200\n"
             .. "已有玩家会更新DKP，新玩家会自动创建。",
     },
     {
@@ -1120,8 +1126,8 @@ local function ShowImportDialog()
 
         for idx, mode in ipairs(IMPORT_MODES) do
             local tab = CreateFrame("Button", nil, d)
-            tab:SetSize(100, 22)
-            tab:SetPoint("TOPLEFT", 16 + (idx - 1) * 104, -32)
+            tab:SetSize(90, 22)
+            tab:SetPoint("TOPLEFT", 16 + (idx - 1) * 94, -32)
             tab:SetNormalFontObject("GameFontNormalSmall")
             tab:SetHighlightFontObject("GameFontHighlightSmall")
 
@@ -1236,7 +1242,10 @@ local function ShowImportDialog()
                 return
             end
             local count = 0
-            if d.currentMode == "dkp" then
+            if d.currentMode == "activity" then
+                DKP.Print("活动记录格式不正确，需以 [YTHT_DKP_ACTIVITY_V1] 开头")
+                return
+            elseif d.currentMode == "dkp" then
                 count = ImportDKPData(text)
             elseif d.currentMode == "log" then
                 count = ImportLogData(text)
