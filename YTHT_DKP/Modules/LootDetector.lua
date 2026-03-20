@@ -73,7 +73,7 @@ local f = CreateFrame("Frame")
 f:RegisterEvent("ENCOUNTER_START")
 f:RegisterEvent("ENCOUNTER_END")
 f:RegisterEvent("START_LOOT_ROLL")
-f:RegisterEvent("ENCOUNTER_LOOT_RECEIVED")
+-- f:RegisterEvent("ENCOUNTER_LOOT_RECEIVED")  -- 移除: 防止 WoW 自动 roll 触发 0 DKP 分配
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
@@ -319,37 +319,8 @@ f:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    ----------------------------------------------------------------
-    -- 玩家获得装备 → 记录获得者
-    ----------------------------------------------------------------
-    if event == "ENCOUNTER_LOOT_RECEIVED" then
-        local encounterID, itemID, itemLink, quantity, playerName, className = ...
-
-        if not itemLink or not playerName then return end
-
-        -- 查找对应的物品记录并更新获得者
-        local instanceName = currentInstance.name
-        if not instanceName then return end
-
-        local sheet = DKP.db.sheets[instanceName]
-        if not sheet then return end
-
-        for _, boss in ipairs(sheet.bosses) do
-            if boss.encounterID == encounterID then
-                for _, item in ipairs(boss.items) do
-                    -- 通过物品ID匹配
-                    local recordItemID = C_Item.GetItemInfoInstant(item.link)
-                    if recordItemID == itemID and (item.winner == "" or item.winner == nil) then
-                        item.winner = playerName
-                        item.winnerClass = className
-                        DKP.Print(playerName .. " 获得了 " .. itemLink)
-                        DKP.RefreshTableUI()
-                        return
-                    end
-                end
-            end
-        end
-    end
+    -- ENCOUNTER_LOOT_RECEIVED 已移除（防止 WoW roll 系统触发 0 DKP 自动分配）
+    -- DKP 分配只通过拍卖/插装备操作
 end)
 
 ----------------------------------------------------------------------

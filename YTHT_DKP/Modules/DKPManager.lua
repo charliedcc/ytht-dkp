@@ -56,6 +56,7 @@ local function RebuildCharLookup()
         end
     end
 end
+DKP.RebuildCharLookup = RebuildCharLookup  -- 暴露给 Comm.lua 同步后调用
 
 function DKP.GetPlayerByCharacter(charName)
     if charToPlayer[charName] then

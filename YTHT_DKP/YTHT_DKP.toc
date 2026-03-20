@@ -16,5 +16,6 @@ Modules/AuctionCore.lua
 Modules/AuctionUI.lua
 Modules/AuctionStart.lua
 Modules/ManualAssign.lua
+Modules/AutoTrade.lua
 Modules/AuctionLog.lua
 Modules/WhisperQuery.lua

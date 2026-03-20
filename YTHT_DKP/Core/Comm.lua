@@ -203,7 +203,6 @@ local function SendChunked(prefix, msgType, data, channel, target)
                 C_ChatInfo.SendAddonMessage(prefix, msg, channel or "RAID")
             end
             if showProgress and (i % 5 == 0 or i == numChunks) then
-                DKP.Print("|cff888888[同步] " .. msgType .. " " .. i .. "/" .. numChunks .. "|r")
             end
         end)
     end
@@ -292,7 +291,9 @@ local function HandleSyncChunk(parts, sender)
                     DKP.db.players[name].lastUpdated = time()
                 end
             end
-            DKP.Print("已从 " .. sender .. " 同步 DKP 数据")
+            -- 重建角色名→玩家名映射（否则新同步的角色无法出价）
+            if DKP.RebuildCharLookup then DKP.RebuildCharLookup() end
+            DKP.Print("已从 " .. GetShortName(sender) .. " 同步 DKP 数据")
             if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
         end
     end
@@ -596,7 +597,6 @@ local function HandleHistoryChunk(parts, sender)
     for _ in pairs(sync.chunks) do received = received + 1 end
 
     if totalChunks > 3 and (received % 3 == 0 or received == totalChunks) then
-        DKP.Print("|cff888888[接收] 拍卖记录 " .. received .. "/" .. totalChunks .. "|r")
     end
 
     if received >= sync.expected then
@@ -726,7 +726,6 @@ function DKP.BroadcastDKPData()
     local data = SerializePlayers()
     if data ~= "" then
         SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", data, channel)
-        DKP.Print("已广播: DKP数据")
     end
 end
 
@@ -737,7 +736,6 @@ function DKP.BroadcastOptions()
     local data = SerializeOptions()
     if data ~= "" then
         SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", data, channel)
-        DKP.Print("已广播: 配置")
     end
 end
 
@@ -749,7 +747,6 @@ function DKP.BroadcastSheetsData()
         local data = DKP.SerializeSheets()
         if data ~= "" then
             SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", data, channel)
-            DKP.Print("已广播: 掉落列表")
         end
     end
 end
@@ -775,7 +772,6 @@ function DKP.BroadcastLogData()
         local data = DKP.SerializeActivity(act)
         if data ~= "" then
             SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel)
-            DKP.Print("已广播: 操作记录")
         end
     end
 end
@@ -795,7 +791,6 @@ function DKP.BroadcastAuctionHistoryData()
         local data = DKP.SerializeActivity(act)
         if data ~= "" then
             SendChunked(DKP.ADDON_PREFIX, "SYNC_AUCTION_HISTORY", data, channel)
-            DKP.Print("已广播: 拍卖记录")
         end
     end
 end
@@ -810,7 +805,6 @@ function DKP.BroadcastFullSync()
         return
     end
 
-    DKP.Print("开始全量同步 (分5批发送)...")
 
     -- 第1批: 权限
     DKP.BroadcastAdminSync()
@@ -934,7 +928,6 @@ local function HandleActivityFormatChunk(parts, sender, pendingTable, sKey, labe
     for _ in pairs(sync.chunks) do received = received + 1 end
 
     if totalChunks > 5 and (received % 5 == 0 or received == totalChunks) then
-        DKP.Print("|cff888888[接收] " .. label .. " " .. received .. "/" .. totalChunks .. "|r")
     end
 
     if received >= sync.expected then
@@ -994,7 +987,6 @@ local function HandleActivityChunk(parts, sender)
     for _ in pairs(sync.chunks) do received = received + 1 end
 
     if totalChunks > 5 and (received % 5 == 0 or received == totalChunks) then
-        DKP.Print("|cff888888[接收] 活动数据 " .. received .. "/" .. totalChunks .. "|r")
     end
 
     -- 超时检测：5秒内没收到新 chunk 且未收全，提示丢包
@@ -1068,7 +1060,6 @@ local function HandleSheetsChunk(parts, sender)
     for _ in pairs(sync.chunks) do received = received + 1 end
 
     if totalChunks > 5 and (received % 5 == 0 or received == totalChunks) then
-        DKP.Print("|cff888888[接收] 掉落列表 " .. received .. "/" .. totalChunks .. "|r")
     end
 
     if received >= sync.expected then

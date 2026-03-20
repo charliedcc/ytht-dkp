@@ -14,7 +14,7 @@ local assignDialog = nil
 ----------------------------------------------------------------------
 local function CreateAssignDialog()
     local d = CreateFrame("Frame", "YTHTDKPManualAssignDialog", UIParent, "BackdropTemplate")
-    d:SetSize(360, 380)
+    d:SetSize(520, 460)
     d:SetPoint("CENTER")
     d:SetFrameStrata("DIALOG")
     d:SetFrameLevel(210)
@@ -142,6 +142,14 @@ end
 ----------------------------------------------------------------------
 -- 刷新玩家列表
 ----------------------------------------------------------------------
+-- 职业排序权重
+local CLASS_SORT_ORDER = {
+    WARRIOR = 1, PALADIN = 2, DEATHKNIGHT = 3,
+    HUNTER = 4, ROGUE = 5, MONK = 6,
+    PRIEST = 7, SHAMAN = 8, MAGE = 9,
+    WARLOCK = 10, DRUID = 11, DEMONHUNTER = 12, EVOKER = 13,
+}
+
 local function RefreshPlayerList(dialog, filter)
     local listChild = dialog.listChild
     local tiedPlayerNames = {}
@@ -151,17 +159,45 @@ local function RefreshPlayerList(dialog, filter)
         end
     end
 
-    -- 收集玩家列表
-    local players = {}
+    -- 收集玩家列表（按角色展开，一个角色一行）
+    local entries = {}
     for name, data in pairs(DKP.db.players or {}) do
-        if not filter or filter == "" or name:lower():find(filter:lower(), 1, true) then
-            table.insert(players, { name = name, dkp = data.dkp or 0, isTied = tiedPlayerNames[name] or false })
+        local chars = data.characters or {}
+        if #chars > 0 then
+            for _, char in ipairs(chars) do
+                local matchFilter = not filter or filter == "" or
+                    char.name:lower():find(filter:lower(), 1, true) or
+                    name:lower():find(filter:lower(), 1, true)
+                if matchFilter then
+                    table.insert(entries, {
+                        playerName = name,
+                        charName = char.name,
+                        class = char.class or "WARRIOR",
+                        dkp = data.dkp or 0,
+                        isTied = tiedPlayerNames[name] or false,
+                    })
+                end
+            end
+        else
+            local matchFilter = not filter or filter == "" or name:lower():find(filter:lower(), 1, true)
+            if matchFilter then
+                table.insert(entries, {
+                    playerName = name,
+                    charName = name,
+                    class = "WARRIOR",
+                    dkp = data.dkp or 0,
+                    isTied = tiedPlayerNames[name] or false,
+                })
+            end
         end
     end
 
-    -- 排序：平局玩家置顶，然后按DKP降序
-    table.sort(players, function(a, b)
+    -- 排序：平局置顶，然后按职业分组，同职业按DKP降序
+    table.sort(entries, function(a, b)
         if a.isTied ~= b.isTied then return a.isTied end
+        local ca = CLASS_SORT_ORDER[a.class] or 99
+        local cb = CLASS_SORT_ORDER[b.class] or 99
+        if ca ~= cb then return ca < cb end
         return a.dkp > b.dkp
     end)
 
@@ -170,12 +206,17 @@ local function RefreshPlayerList(dialog, filter)
         row:Hide()
     end
 
-    local ROW_HEIGHT = 22
-    for i, p in ipairs(players) do
+    -- 多列布局
+    local ROW_HEIGHT = 20
+    local COL_WIDTH = 155
+    local NUM_COLS = 3
+    local COL_SPACING = 4
+
+    for i, e in ipairs(entries) do
         local row = dialog.playerRows[i]
         if not row then
             row = CreateFrame("Button", nil, listChild)
-            row:SetHeight(ROW_HEIGHT)
+            row:SetSize(COL_WIDTH, ROW_HEIGHT)
 
             local bg = row:CreateTexture(nil, "BACKGROUND")
             bg:SetAllPoints()
@@ -186,52 +227,56 @@ local function RefreshPlayerList(dialog, filter)
             hl:SetColorTexture(1, 1, 1, 0.1)
 
             local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            nameText:SetPoint("LEFT", 6, 0)
-            nameText:SetWidth(160)
+            nameText:SetPoint("LEFT", 4, 0)
+            nameText:SetWidth(COL_WIDTH - 50)
             nameText:SetJustifyH("LEFT")
+            nameText:SetWordWrap(false)
             row.nameText = nameText
 
             local dkpText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            dkpText:SetPoint("RIGHT", -6, 0)
-            dkpText:SetWidth(80)
+            dkpText:SetPoint("RIGHT", -4, 0)
+            dkpText:SetWidth(44)
             dkpText:SetJustifyH("RIGHT")
             row.dkpText = dkpText
 
             local selectBg = row:CreateTexture(nil, "ARTWORK")
             selectBg:SetAllPoints()
-            selectBg:SetColorTexture(0.2, 0.4, 0.8, 0.4)
+            selectBg:SetColorTexture(0.2, 0.4, 0.8, 0.5)
             selectBg:Hide()
             row.selectBg = selectBg
 
             dialog.playerRows[i] = row
         end
 
-        row:SetPoint("TOPLEFT", listChild, "TOPLEFT", 0, -(i - 1) * (ROW_HEIGHT + 1))
-        row:SetPoint("RIGHT", listChild, "RIGHT", 0, 0)
+        -- 多列定位
+        local col = (i - 1) % NUM_COLS
+        local rowNum = math.floor((i - 1) / NUM_COLS)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", listChild, "TOPLEFT", col * (COL_WIDTH + COL_SPACING), -rowNum * (ROW_HEIGHT + 1))
 
-        -- 背景颜色
-        if p.isTied then
+        -- 背景
+        if e.isTied then
             row.bg:SetColorTexture(0.3, 0.2, 0.05, 0.6)
-        elseif i % 2 == 0 then
-            row.bg:SetColorTexture(0.13, 0.13, 0.18, 0.7)
+        elseif rowNum % 2 == 0 then
+            row.bg:SetColorTexture(0.10, 0.10, 0.15, 0.5)
         else
-            row.bg:SetColorTexture(0.10, 0.10, 0.15, 0.7)
+            row.bg:SetColorTexture(0.13, 0.13, 0.18, 0.5)
         end
 
-        local prefix = p.isTied and "|cffFF8800[平局] |r" or ""
-        row.nameText:SetText(prefix .. p.name)
-        row.dkpText:SetText("|cffFFD700" .. p.dkp .. "|r DKP")
+        -- 角色名 + 职业颜色
+        local prefix = e.isTied and "★" or ""
+        row.nameText:SetText(prefix .. DKP.ClassColorText(e.charName, e.class))
+        row.dkpText:SetText("|cffFFD700" .. e.dkp .. "|r")
 
         -- 选中状态
-        if dialog.selectedPlayer == p.name then
+        if dialog.selectedPlayer == e.playerName then
             row.selectBg:Show()
         else
             row.selectBg:Hide()
         end
 
         row:SetScript("OnClick", function()
-            dialog.selectedPlayer = p.name
-            -- 更新所有行的选中显示
+            dialog.selectedPlayer = e.playerName
             for _, r in ipairs(dialog.playerRows) do
                 if r.selectBg then r.selectBg:Hide() end
             end
@@ -241,7 +286,8 @@ local function RefreshPlayerList(dialog, filter)
         row:Show()
     end
 
-    listChild:SetHeight(math.max(1, #players * (ROW_HEIGHT + 1)))
+    local totalRows = math.ceil(#entries / NUM_COLS)
+    listChild:SetHeight(math.max(1, totalRows * (ROW_HEIGHT + 1)))
 end
 
 ----------------------------------------------------------------------

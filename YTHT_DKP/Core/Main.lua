@@ -1017,25 +1017,47 @@ function DKP.ToggleMainFrame()
     if not DKP.MainFrame then return end
     if DKP.MainFrame:IsShown() then
         if DKP.hasUnsavedChanges then
-            StaticPopupDialogs["YTHT_DKP_RELOAD_PROMPT"] = {
-                text = "DKP数据已修改，是否重载UI以保存？\n（不重载则关闭游戏时自动保存，但崩溃会丢失）",
-                button1 = "重载保存",
-                button2 = "稍后关闭",
-                button3 = "不保存关闭",
-                OnAccept = function() ReloadUI() end,
-                OnCancel = function()
-                    -- button2: 稍后关闭 - 什么都不做
-                end,
-                OnAlt = function()
-                    -- button3: 不保存关闭
+            -- 自定义保存提示（避免 StaticPopup 在 WoW 12.0 按钮无效）
+            if not DKP._reloadDialog then
+                local d = CreateFrame("Frame", "YTHTDKPReloadDialog", UIParent, "BackdropTemplate")
+                d:SetSize(340, 120)
+                d:SetPoint("CENTER")
+                d:SetFrameStrata("FULLSCREEN_DIALOG")
+                d:SetFrameLevel(260)
+                d:EnableMouse(true)
+                d:SetBackdrop({
+                    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+                    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+                    edgeSize = 16,
+                    insets = { left = 4, right = 4, top = 4, bottom = 4 },
+                })
+                d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+                d:Hide()
+                local text = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                text:SetPoint("TOP", 0, -14)
+                text:SetWidth(310)
+                text:SetText("DKP数据已修改，是否重载UI以保存？\n(崩溃会丢失未保存的数据)")
+                local reloadBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                reloadBtn:SetSize(80, 24)
+                reloadBtn:SetPoint("BOTTOMLEFT", 16, 10)
+                reloadBtn:SetText("重载保存")
+                reloadBtn:SetScript("OnClick", function() ReloadUI() end)
+                local laterBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                laterBtn:SetSize(80, 24)
+                laterBtn:SetPoint("BOTTOM", 0, 10)
+                laterBtn:SetText("稍后")
+                laterBtn:SetScript("OnClick", function() d:Hide() end)
+                local closeBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                closeBtn:SetSize(80, 24)
+                closeBtn:SetPoint("BOTTOMRIGHT", -16, 10)
+                closeBtn:SetText("不保存关闭")
+                closeBtn:SetScript("OnClick", function()
+                    d:Hide()
                     DKP.MainFrame:Hide()
-                end,
-                timeout = 0,
-                whileDead = true,
-                hideOnEscape = true,
-            }
-            local popup = StaticPopup_Show("YTHT_DKP_RELOAD_PROMPT")
-            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+                end)
+                DKP._reloadDialog = d
+            end
+            DKP._reloadDialog:Show()
         else
             DKP.MainFrame:Hide()
         end
