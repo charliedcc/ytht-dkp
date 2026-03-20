@@ -571,8 +571,14 @@ function DKP.BroadcastFullSync()
     -- 第4批: log + auctionHistory（延迟3秒，不含 players 避免冗余）
     C_Timer.After(3, function()
         local ch = GetChannel()
-        if not ch then return end
+        if not ch then
+            DKP.Print("|cffFF8800[调试] 第4批: 无频道，跳过|r")
+            return
+        end
         if DKP.SerializeActivity then
+            local logCount = DKP.db.log and #DKP.db.log or 0
+            local histCount = DKP.db.auctionHistory and #DKP.db.auctionHistory or 0
+            DKP.Print("|cff888888[调试] 准备广播: " .. logCount .. " 条日志, " .. histCount .. " 条拍卖记录|r")
             local act = {
                 name = "sync",
                 startTime = DKP.db.session and DKP.db.session.startTime or 0,
@@ -583,10 +589,15 @@ function DKP.BroadcastFullSync()
                 players = {},  -- 不重复发 players
             }
             local actData = DKP.SerializeActivity(act)
+            DKP.Print("|cff888888[调试] 序列化结果: " .. #actData .. " 字节|r")
             if actData ~= "" then
                 SendChunked(DKP.ADDON_PREFIX, "SYNC_ACTIVITY", actData, ch)
                 DKP.Print("已广播: 操作记录和拍卖记录")
+            else
+                DKP.Print("|cffFF8800[调试] 序列化为空，跳过|r")
             end
+        else
+            DKP.Print("|cffFF8800[调试] SerializeActivity 不存在|r")
         end
     end)
 
@@ -691,6 +702,8 @@ local function HandleActivityChunk(parts, sender)
     local received = 0
     for _ in pairs(sync.chunks) do received = received + 1 end
 
+    DKP.Print("|cff888888[调试] 收到活动数据 chunk " .. chunkIndex .. "/" .. totalChunks .. " (已收 " .. received .. ")|r")
+
     if received >= sync.expected then
         local fullData = {}
         for i = 1, sync.expected do
@@ -698,6 +711,8 @@ local function HandleActivityChunk(parts, sender)
         end
         local text = table.concat(fullData)
         pendingActivitySync[sKey] = nil
+
+        DKP.Print("|cff888888[调试] 活动数据重组完成: " .. #text .. " 字节|r")
 
         if DKP.DeserializeActivity then
             local act = DKP.DeserializeActivity(text)
@@ -715,6 +730,8 @@ local function HandleActivityChunk(parts, sender)
                     #(act.log or {}) .. " 条日志, " .. #(act.auctionHistory or {}) .. " 条拍卖")
                 if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
                 if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+            else
+                DKP.Print("|cffFF4444[调试] DeserializeActivity 返回 nil|r")
             end
         end
     end

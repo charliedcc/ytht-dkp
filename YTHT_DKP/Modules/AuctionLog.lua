@@ -22,12 +22,14 @@ local STATE_COLORS = {
     CANCELLED = { r = 0.5, g = 0.5, b = 0.5 },
     MANUAL = { r = 0.4, g = 0.6, b = 1.0 },
     TIE = { r = 1.0, g = 0.3, b = 0.3 },
+    ACTIVE = { r = 1.0, g = 1.0, b = 0.0 },
 }
 local STATE_LABELS = {
     ENDED = "已结束",
     CANCELLED = "已取消",
     MANUAL = "手动",
     TIE = "平局",
+    ACTIVE = "进行中",
 }
 
 -- 缓存
@@ -535,23 +537,77 @@ function DKP.RefreshAuctionLogUI()
     for _, row in ipairs(leftRows) do row:Hide() end
     for _, h in ipairs(bossHeaders) do h:Hide() end
 
-    if #history == 0 then
+    -- 收集进行中的拍卖
+    local activeAuctions = {}
+    if DKP.activeAuctions then
+        for _, auction in pairs(DKP.activeAuctions) do
+            if auction.state == DKP.AUCTION_STATE.ACTIVE then
+                table.insert(activeAuctions, auction)
+            end
+        end
+        table.sort(activeAuctions, function(a, b) return a.startTime > b.startTime end)
+    end
+
+    if #history == 0 and #activeAuctions == 0 then
         if parent.emptyText then parent.emptyText:Show() end
         leftChild:SetHeight(1)
-        -- 清详情
         selectedEntry = nil
         RefreshDetailPanel()
         return
     end
     if parent.emptyText then parent.emptyText:Hide() end
 
-    -- 分组
-    local groups, order = GroupHistoryByBoss(history)
-
     local yOffset = 0
     local rowIndex = 0
     local headerIndex = 0
     local globalRowIdx = 0
+
+    -- === 进行中的拍卖 ===
+    if #activeAuctions > 0 then
+        headerIndex = headerIndex + 1
+        local header = GetOrCreateBossHeader(leftChild, headerIndex)
+        header:SetPoint("TOPLEFT", leftChild, "TOPLEFT", 0, yOffset)
+        header:SetPoint("RIGHT", leftChild, "RIGHT", 0, 0)
+        header.text:SetText("|cffFFFF00进行中 (" .. #activeAuctions .. ")|r")
+        header:Show()
+        yOffset = yOffset - BOSS_HEADER_HEIGHT - 2
+
+        for _, auction in ipairs(activeAuctions) do
+            rowIndex = rowIndex + 1
+            globalRowIdx = globalRowIdx + 1
+            local row = GetOrCreateRow(leftChild, rowIndex)
+            row:SetPoint("TOPLEFT", leftChild, "TOPLEFT", 0, yOffset)
+            row:SetPoint("RIGHT", leftChild, "RIGHT", 0, 0)
+
+            -- 构造临时 entry 用于显示
+            local bidderDisplay = auction.currentBidder or ""
+            local remaining = math.max(0, math.floor(auction.endTime - GetTime()))
+            local tempEntry = {
+                itemLink = auction.itemLink,
+                state = "ACTIVE",
+                winner = bidderDisplay ~= "" and bidderDisplay or nil,
+                finalBid = auction.currentBid or 0,
+                startBid = auction.startBid or 0,
+                bidCount = #(auction.bids or {}),
+                bids = auction.bids,
+                timestamp = time(),
+                officer = auction.officer,
+                encounterName = auction.encounterName,
+            }
+            SetRowData(row, tempEntry, globalRowIdx)
+
+            -- 覆盖状态显示为倒计时
+            row.stateText:SetText("|cffFFFF00" .. remaining .. "秒|r")
+
+            row:Show()
+            yOffset = yOffset - ROW_HEIGHT - 1
+        end
+
+        yOffset = yOffset - 4
+    end
+
+    -- 分组历史记录
+    local groups, order = GroupHistoryByBoss(history)
 
     for _, bossName in ipairs(order) do
         local entries = groups[bossName]
