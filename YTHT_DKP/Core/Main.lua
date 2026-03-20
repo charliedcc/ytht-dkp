@@ -1624,6 +1624,85 @@ function DKP.ShowActivityHistory()
 end
 
 ----------------------------------------------------------------------
+-- 悬浮快捷按钮
+----------------------------------------------------------------------
+function DKP.CreateMiniButton()
+    if DKP._miniBtn then return end
+
+    local btn = CreateFrame("Button", "YTHTDKPMiniButton", UIParent)
+    btn:SetSize(42, 20)
+    btn:SetPoint("TOP", UIParent, "TOP", 0, -2)
+    btn:SetMovable(true)
+    btn:EnableMouse(true)
+    btn:SetClampedToScreen(true)
+    btn:RegisterForDrag("LeftButton")
+    btn:SetScript("OnDragStart", btn.StartMoving)
+    btn:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        -- 保存位置
+        local point, _, relPoint, x, y = self:GetPoint()
+        DKP.db.miniBtnPoint = { point, "UIParent", relPoint, x, y }
+    end)
+
+    local bg = btn:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0, 0.6, 0.8, 0.8)
+
+    local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    text:SetPoint("CENTER")
+    text:SetText("YTHT")
+    text:SetTextColor(1, 1, 1)
+
+    btn:SetScript("OnClick", function(self, button)
+        if button == "LeftButton" then
+            DKP.ToggleMainFrame()
+        end
+    end)
+
+    btn:SetScript("OnEnter", function(self)
+        bg:SetColorTexture(0, 0.8, 1, 0.9)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine("YTHT DKP v" .. (DKP.version or "?"))
+        GameTooltip:AddLine("左键: 打开/关闭主界面", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("拖拽: 移动位置", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("/ytht btn - 显示/隐藏此按钮", 0.6, 0.6, 0.6)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function()
+        bg:SetColorTexture(0, 0.6, 0.8, 0.8)
+        GameTooltip:Hide()
+    end)
+
+    -- 恢复位置
+    if DKP.db.miniBtnPoint and #DKP.db.miniBtnPoint == 5 then
+        btn:ClearAllPoints()
+        btn:SetPoint(unpack(DKP.db.miniBtnPoint))
+    end
+
+    -- 恢复显隐状态
+    if DKP.db.miniBtnHidden then
+        btn:Hide()
+    else
+        btn:Show()
+    end
+
+    DKP._miniBtn = btn
+end
+
+function DKP.ToggleMiniButton()
+    if not DKP._miniBtn then return end
+    if DKP._miniBtn:IsShown() then
+        DKP._miniBtn:Hide()
+        DKP.db.miniBtnHidden = true
+        DKP.Print("悬浮按钮已隐藏 (输入 /ytht btn 恢复)")
+    else
+        DKP._miniBtn:Show()
+        DKP.db.miniBtnHidden = false
+        DKP.Print("悬浮按钮已显示")
+    end
+end
+
+----------------------------------------------------------------------
 -- 初始化
 ----------------------------------------------------------------------
 function DKP.OnInitialized()
@@ -1668,6 +1747,9 @@ function DKP.OnInitialized()
     if DKP.db.currentSheet and DKP.db.sheets[DKP.db.currentSheet] then
         DKP.RefreshTableUI()
     end
+
+    -- 悬浮快捷按钮
+    DKP.CreateMiniButton()
 
     -- 注册斜杠命令
     SLASH_YTHTDKP1 = "/ytht"
@@ -1982,6 +2064,9 @@ function DKP.OnInitialized()
                 DKP.Print("  /ytht debug reset      - 重置拍卖/session状态")
             end
 
+        elseif cmd == "btn" or cmd == "button" then
+            DKP.ToggleMiniButton()
+
         elseif cmd == "help" then
             DKP.Print("===== YTHT DKP 命令 =====")
             DKP.Print("/ytht            - 显示/隐藏主界面")
@@ -1995,6 +2080,7 @@ function DKP.OnInitialized()
             DKP.Print("/ytht bossbonus  - Boss击杀加分配置")
             DKP.Print("/ytht status     - 显示当前状态")
             DKP.Print("/ytht reset <名> - 重置指定副本数据")
+            DKP.Print("/ytht btn        - 显示/隐藏悬浮按钮")
             DKP.Print("/ytht debug      - 调试命令")
             DKP.Print("/ytht help       - 显示此帮助")
             DKP.Print("=========================")
