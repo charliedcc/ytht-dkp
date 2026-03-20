@@ -385,6 +385,20 @@ local function CreateMainFrame()
     end)
     f.clearSheetBtn = clearSheetBtn
 
+    -- 同步掉落按钮
+    local syncLootBtn = CreateFrame("Button", nil, lootContent, "UIPanelButtonTemplate")
+    syncLootBtn:SetSize(72, 18)
+    syncLootBtn:SetPoint("RIGHT", clearSheetBtn, "LEFT", -4, 0)
+    syncLootBtn:SetText("同步掉落")
+    syncLootBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer or not DKP.IsOfficer() then
+            DKP.Print("只有管理员可以同步")
+            return
+        end
+        if DKP.BroadcastSheetsData then DKP.BroadcastSheetsData() end
+    end)
+    f.syncLootBtn = syncLootBtn
+
     -- 滚动区域
     local scrollFrame = CreateFrame("ScrollFrame", "YTHTDKPScrollFrame", lootContent, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", lootContent, "TOPLEFT", PADDING, -22)

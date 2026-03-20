@@ -23,7 +23,7 @@ local CLASS_NAMES = {
 }
 
 -- UI 常量
-local TOOLBAR_HEIGHT = 80
+local TOOLBAR_HEIGHT = 56
 local ROW_HEIGHT = 26
 local COL_NAME_WIDTH = 120
 local COL_CHARS_WIDTH = 320
@@ -2116,7 +2116,7 @@ function DKP.ShowVersionDialog()
     end
 
     if not versionDialog then
-        local d = CreateDialogFrame("YTHTDKPVersionDialog", 420, 360, "团队插件版本")
+        local d = CreateDialogFrame("YTHTDKPVersionDialog", 520, 380, "团队插件版本")
 
         local closeBtn = CreateFrame("Button", nil, d, "UIPanelCloseButton")
         closeBtn:SetPoint("TOPRIGHT", -2, -2)
@@ -2139,13 +2139,17 @@ function DKP.ShowVersionDialog()
         h1:SetText("角色名")
         h1:SetTextColor(0.6, 0.6, 0.6)
         local h2 = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        h2:SetPoint("TOPLEFT", headerBg, "TOPLEFT", 160, 0)
+        h2:SetPoint("TOPLEFT", headerBg, "TOPLEFT", 120, 0)
         h2:SetText("版本")
         h2:SetTextColor(0.6, 0.6, 0.6)
         local h3 = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        h3:SetPoint("TOPLEFT", headerBg, "TOPLEFT", 280, 0)
-        h3:SetText("状态")
+        h3:SetPoint("TOPLEFT", headerBg, "TOPLEFT", 200, 0)
+        h3:SetText("团队")
         h3:SetTextColor(0.6, 0.6, 0.6)
+        local h4 = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        h4:SetPoint("TOPLEFT", headerBg, "TOPLEFT", 380, 0)
+        h4:SetText("状态")
+        h4:SetTextColor(0.6, 0.6, 0.6)
 
         -- 滚动区
         local sf = CreateFrame("ScrollFrame", "YTHTDKPVersionScroll", d, "UIPanelScrollFrameTemplate")
@@ -2153,7 +2157,7 @@ function DKP.ShowVersionDialog()
         sf:SetPoint("BOTTOMRIGHT", -32, 50)
 
         local sc = CreateFrame("Frame", "YTHTDKPVersionScrollChild", sf)
-        sc:SetWidth(370)
+        sc:SetWidth(470)
         sc:SetHeight(1)
         sf:SetScrollChild(sc)
         d.scrollChild = sc
@@ -2197,22 +2201,29 @@ function DKP.ShowVersionDialog()
             local row = d.rows[idx]
             if not row then
                 row = CreateFrame("Frame", nil, sc)
-                row:SetSize(370, 20)
+                row:SetSize(470, 20)
                 local bg = row:CreateTexture(nil, "BACKGROUND")
                 bg:SetAllPoints()
                 row.bg = bg
                 local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                 nameText:SetPoint("LEFT", 4, 0)
-                nameText:SetWidth(154)
+                nameText:SetWidth(114)
                 nameText:SetJustifyH("LEFT")
+                nameText:SetWordWrap(false)
                 row.nameText = nameText
                 local verText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                verText:SetPoint("LEFT", 160, 0)
-                verText:SetWidth(118)
+                verText:SetPoint("LEFT", 120, 0)
+                verText:SetWidth(78)
                 verText:SetJustifyH("LEFT")
                 row.verText = verText
+                local teamText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                teamText:SetPoint("LEFT", 200, 0)
+                teamText:SetWidth(178)
+                teamText:SetJustifyH("LEFT")
+                teamText:SetWordWrap(false)
+                row.teamText = teamText
                 local statusText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                statusText:SetPoint("LEFT", 280, 0)
+                statusText:SetPoint("LEFT", 380, 0)
                 statusText:SetWidth(80)
                 statusText:SetJustifyH("LEFT")
                 row.statusText = statusText
@@ -2229,6 +2240,18 @@ function DKP.ShowVersionDialog()
             local result = DKP._versionResults[shortName]
             if result then
                 row.verText:SetText("v" .. result.version)
+                -- 团队信息
+                local myTeamID = DKP.GetCurrentTeamID and DKP.GetCurrentTeamID() or "local"
+                if result.teamName and result.teamName ~= "?" then
+                    row.teamText:SetText(result.teamName)
+                    if result.teamID == myTeamID then
+                        row.teamText:SetTextColor(0.3, 1, 0.3)  -- 同团队绿色
+                    else
+                        row.teamText:SetTextColor(1, 0.5, 0)  -- 不同团队橙色
+                    end
+                else
+                    row.teamText:SetText("")
+                end
                 if result.version == DKP.version then
                     row.verText:SetTextColor(0.3, 1, 0.3)
                     row.statusText:SetText("|cff00FF00已安装|r")
@@ -2238,6 +2261,7 @@ function DKP.ShowVersionDialog()
                 end
             else
                 row.verText:SetText("")
+                row.teamText:SetText("")
                 row.statusText:SetText("|cff888888等待回复...|r")
             end
 
@@ -3343,10 +3367,28 @@ function DKP.InitDKPPanel()
     local ROW1_Y = -2
     local ROW2_Y = -28
 
-    -- === 第一排：常用操作 ===
+    -- === 第一排：同步 + 常用操作 ===
+    local syncAdminBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncAdminBtn:SetSize(68, 22)
+    syncAdminBtn:SetPoint("TOPLEFT", 0, ROW1_Y)
+    syncAdminBtn:SetText("同步权限")
+    syncAdminBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
+        if DKP.BroadcastAdminSync then DKP.BroadcastAdminSync(); DKP.Print("已广播权限") end
+    end)
+
+    local syncDKPBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
+    syncDKPBtn:SetSize(68, 22)
+    syncDKPBtn:SetPoint("LEFT", syncAdminBtn, "RIGHT", 4, 0)
+    syncDKPBtn:SetText("同步DKP")
+    syncDKPBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
+        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+    end)
+
     local bulkBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     bulkBtn:SetSize(72, 22)
-    bulkBtn:SetPoint("TOPLEFT", 0, ROW1_Y)
+    bulkBtn:SetPoint("LEFT", syncDKPBtn, "RIGHT", 8, 0)
     bulkBtn:SetText("批量调整")
     bulkBtn:SetScript("OnClick", function() ShowBulkAdjustDialog() end)
     parent.bulkBtn = bulkBtn
@@ -3417,67 +3459,17 @@ function DKP.InitDKPPanel()
     settingsBtn:SetText("设置")
     settingsBtn:SetScript("OnClick", function() ShowSettingsDialog() end)
 
-    -- === 第三排：同步操作 ===
-    local ROW3_Y = -54
-    local TOOLBAR_ROW3 = true
-
-    local syncAllBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    syncAllBtn:SetSize(68, 22)
-    syncAllBtn:SetPoint("TOPLEFT", 0, ROW3_Y)
-    syncAllBtn:SetText("同步全部")
-    syncAllBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
-        if DKP.BroadcastFullSync then DKP.BroadcastFullSync() end
-    end)
-
-    local syncAdminBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    syncAdminBtn:SetSize(68, 22)
-    syncAdminBtn:SetPoint("LEFT", syncAllBtn, "RIGHT", 4, 0)
-    syncAdminBtn:SetText("同步权限")
-    syncAdminBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
-        if DKP.BroadcastAdminSync then DKP.BroadcastAdminSync(); DKP.Print("已广播权限") end
-    end)
-
-    local syncDKPBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    syncDKPBtn:SetSize(68, 22)
-    syncDKPBtn:SetPoint("LEFT", syncAdminBtn, "RIGHT", 4, 0)
-    syncDKPBtn:SetText("同步DKP")
-    syncDKPBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
-        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
-    end)
-
-    local syncLootBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    syncLootBtn:SetSize(72, 22)
-    syncLootBtn:SetPoint("LEFT", syncDKPBtn, "RIGHT", 4, 0)
-    syncLootBtn:SetText("同步掉落")
-    syncLootBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
-        if DKP.BroadcastSheetsData then DKP.BroadcastSheetsData() end
-    end)
-
-    local syncRecordBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    syncRecordBtn:SetSize(72, 22)
-    syncRecordBtn:SetPoint("LEFT", syncLootBtn, "RIGHT", 4, 0)
-    syncRecordBtn:SetText("同步记录")
-    syncRecordBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer() then DKP.Print("只有管理员可以同步"); return end
-        if DKP.BroadcastActivityData then DKP.BroadcastActivityData() end
-    end)
-
-    -- 版本查看按钮（所有人可用）
+    -- 版本查看按钮（所有人可用，第二排末尾）
     local versionBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     versionBtn:SetSize(72, 22)
-    versionBtn:SetPoint("LEFT", syncRecordBtn, "RIGHT", 8, 0)
+    versionBtn:SetPoint("LEFT", settingsBtn, "RIGHT", 4, 0)
     versionBtn:SetText("插件版本")
     versionBtn:SetScript("OnClick", function()
         DKP.ShowVersionDialog()
     end)
 
     -- 管理员专用按钮列表（RefreshDKPUI 时根据权限显示/隐藏）
-    parent.adminButtons = { bulkBtn, raidBtn, addBtn, importBtn, settingsBtn,
-        syncAllBtn, syncAdminBtn, syncDKPBtn, syncLootBtn, syncRecordBtn }
+    parent.adminButtons = { syncAdminBtn, syncDKPBtn, bulkBtn, raidBtn, addBtn, importBtn, settingsBtn }
 
     -- 表头
     local headerY = -TOOLBAR_HEIGHT - 2

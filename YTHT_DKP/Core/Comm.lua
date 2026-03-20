@@ -238,6 +238,9 @@ local function HandleSyncChunk(parts, sender)
         local text = table.concat(fullData)
         pendingSync[sender] = nil
 
+        -- 信任检查
+        if not IsTrustedSender(sender) then return end
+
         -- 应用同步数据
         local playersData = DeserializePlayers(text)
         if next(playersData) then
@@ -271,14 +274,23 @@ local function HandleSyncChunk(parts, sender)
 end
 
 ----------------------------------------------------------------------
+-- 发送者信任检查（当前团队的管理员才信任）
+----------------------------------------------------------------------
+local function IsTrustedSender(sender)
+    local senderShort = sender:match("^([^%-]+)") or sender
+    -- 当前团队有 admins 列表时，发送者必须在其中
+    if DKP.db.admins and next(DKP.db.admins) then
+        return DKP.db.admins[senderShort] == true
+    end
+    -- 没有 admins 列表（应该不会发生）, 允许
+    return true
+end
+
+----------------------------------------------------------------------
 -- DKP 变动接收（团员端）
 ----------------------------------------------------------------------
 local function HandleDKPChange(parts, sender)
-    -- 只接受管理员广播的DKP变动
-    local senderShort = sender:match("^([^%-]+)") or sender
-    if DKP.db.admins and next(DKP.db.admins) and not DKP.db.admins[senderShort] then
-        return
-    end
+    if not IsTrustedSender(sender) then return end
     -- parts: { "DKP_CHANGE", playerName, newDKP, changeAmount, reason, timestamp, officer }
     local playerName = parts[2]
     local newDKP = tonumber(parts[3])
@@ -534,11 +546,8 @@ local function HandleHistoryChunk(parts, sender)
         local data = table.concat(fullData)
         pendingHistorySync[sKey] = nil
 
+        if not IsTrustedSender(sender) then return end
         local senderShort = sender:match("^([^%-]+)") or sender
-        -- 只接受管理员广播的历史
-        if DKP.db.admins and next(DKP.db.admins) and not DKP.db.admins[senderShort] then
-            return
-        end
 
         -- 解析 \031 分隔的字段
         local f = { strsplit("\031", data) }
@@ -864,6 +873,8 @@ local function HandleActivityChunk(parts, sender)
 
         DKP.Print("|cff888888[调试] 活动数据重组完成: " .. #text .. " 字节|r")
 
+        if not IsTrustedSender(sender) then return end
+
         if DKP.DeserializeActivity then
             local act = DKP.DeserializeActivity(text)
             if act then
@@ -918,6 +929,8 @@ local function HandleSheetsChunk(parts, sender)
         end
         local text = table.concat(fullData)
         pendingSheetsSync[sKey] = nil
+
+        if not IsTrustedSender(sender) then return end
 
         local newSheets = DKP.DeserializeSheets(text)
         if not next(newSheets) then return end
@@ -999,6 +1012,8 @@ local function HandleOptionsChunk(parts, sender)
         local text = table.concat(fullData)
         pendingOptSync[sKey] = nil
 
+        if not IsTrustedSender(sender) then return end
+
         local newOpts = DeserializeOptions(text)
         if next(newOpts) then
             for k, v in pairs(newOpts) do
@@ -1046,16 +1061,20 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
         elseif msgType == "HISTORY_ENTRY" then
             HandleHistoryChunk(parts, sender)
         elseif msgType == "VERSION_QUERY" then
-            -- 回复自己的版本号
-            local reply = table.concat({ "VERSION_REPLY", DKP.version or "?", DKP.playerName or "?" }, MSG_SEP)
+            -- 回复自己的版本号 + 团队信息
+            local teamName = DKP.GetCurrentTeamName and DKP.GetCurrentTeamName() or "?"
+            local teamID = DKP.GetCurrentTeamID and DKP.GetCurrentTeamID() or "?"
+            local reply = table.concat({ "VERSION_REPLY", DKP.version or "?", DKP.playerName or "?", teamName, teamID }, MSG_SEP)
             DKP.SendDKPMessage(reply)
         elseif msgType == "VERSION_REPLY" then
-            -- 收集版本回复
+            -- 收集版本回复（含团队信息）
             local version = parts[2] or "?"
-            local playerName = parts[3] or senderShort
+            local playerName = parts[3] or "?"
+            local teamName = parts[4] or "?"
+            local teamID = parts[5] or "?"
             local senderShort2 = sender:match("^([^%-]+)") or sender
             if DKP._versionResults then
-                DKP._versionResults[senderShort2] = { version = version, name = playerName, time = GetTime() }
+                DKP._versionResults[senderShort2] = { version = version, name = playerName, teamName = teamName, teamID = teamID, time = GetTime() }
                 if DKP._refreshVersionUI then DKP._refreshVersionUI() end
             end
         elseif msgType == "QUERY_DKP" then

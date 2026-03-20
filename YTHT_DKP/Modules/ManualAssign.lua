@@ -335,9 +335,9 @@ function DKP.ShowManualAssignDialog(itemLink, itemData, bossData)
             end
         end
 
-        -- 更新 loot table itemData
+        -- 更新 loot table itemData（用角色名显示）
         if itemData then
-            itemData.winner = selectedPlayer
+            itemData.winner = winnerChar
             itemData.winnerClass = winnerClass
             itemData.dkp = dkpCost
             itemData.tiedBidders = nil

@@ -95,6 +95,19 @@ function DKP.InitAuctionLogPanel()
         if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
     end)
 
+    -- 同步记录按钮
+    local syncRecordBtn = CreateFrame("Button", nil, leftFrame, "UIPanelButtonTemplate")
+    syncRecordBtn:SetSize(60, 16)
+    syncRecordBtn:SetPoint("LEFT", clearLogBtn, "RIGHT", 4, 0)
+    syncRecordBtn:SetText("同步记录")
+    syncRecordBtn:SetScript("OnClick", function()
+        if not DKP.IsOfficer or not DKP.IsOfficer() then
+            DKP.Print("只有管理员可以同步")
+            return
+        end
+        if DKP.BroadcastActivityData then DKP.BroadcastActivityData() end
+    end)
+
     -- 左侧滚动区
     local leftScroll = CreateFrame("ScrollFrame", "YTHTDKPAuctionLogLeftScroll", leftFrame, "UIPanelScrollFrameTemplate")
     leftScroll:SetPoint("TOPLEFT", 0, -18)
