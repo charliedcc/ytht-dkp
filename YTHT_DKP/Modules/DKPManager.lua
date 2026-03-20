@@ -85,6 +85,7 @@ function DKP.AddPlayer(playerName)
         lastUpdated = time(),
     }
     DKP.Print("添加玩家: " .. playerName)
+    if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
     return true
 end
 
@@ -93,6 +94,7 @@ function DKP.RemovePlayer(playerName)
     DKP.db.players[playerName] = nil
     RebuildCharLookup()
     DKP.Print("移除玩家: " .. playerName)
+    if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
     return true
 end
 
@@ -109,6 +111,7 @@ function DKP.AddCharacter(playerName, charName, charClass)
     charToPlayer[charName] = playerName
     player.lastUpdated = time()
     DKP.Print("添加角色: " .. charName .. " (" .. (CLASS_NAMES[charClass] or charClass or "?") .. ") -> " .. playerName)
+    if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
     return true
 end
 
@@ -120,6 +123,7 @@ function DKP.RemoveCharacter(playerName, charName)
             table.remove(player.characters, i)
             charToPlayer[charName] = nil
             player.lastUpdated = time()
+            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
             return true
         end
     end
@@ -293,6 +297,7 @@ function DKP.RenamePlayer(oldName, newName)
     -- 注意: admins 按角色名(UnitName)存储，与DKP玩家名无关，不需要同步
     RebuildCharLookup()
     DKP.Print("玩家重命名: " .. oldName .. " -> " .. newName)
+    if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
     return true
 end
 
@@ -306,6 +311,7 @@ function DKP.RenameCharacter(playerName, oldCharName, newCharName)
             charToPlayer[newCharName] = playerName
             player.lastUpdated = time()
             DKP.Print("角色重命名: " .. oldCharName .. " -> " .. newCharName)
+            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
             return true
         end
     end
