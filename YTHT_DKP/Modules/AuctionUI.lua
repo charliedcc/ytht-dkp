@@ -510,6 +510,16 @@ function DKP.UpdateAuctionTimers()
     end
 end
 
+-- 拍卖记录页定时刷新（每秒一次，ticker 驱动）
+local lastAuctionLogRefresh = 0
+function DKP.UpdateAuctionLogTimer()
+    local now = GetTime()
+    if now - lastAuctionLogRefresh >= 1 then
+        lastAuctionLogRefresh = now
+        if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+    end
+end
+
 ----------------------------------------------------------------------
 -- 显示/隐藏
 ----------------------------------------------------------------------

@@ -149,8 +149,8 @@ function DKP.StartAuction(itemLink, startBid, duration, encounterInfo)
 
     DKP.Print("拍卖发起: " .. itemLink .. " 起拍 " .. startBid .. " DKP")
 
-    -- 更新UI（延迟一帧确保 AuctionStart 对话框已关闭）
-    C_Timer.After(0, function()
+    -- 更新UI（延迟0.1秒确保 AuctionStart 对话框已关闭）
+    C_Timer.After(0.1, function()
         if DKP.RefreshTableUI then DKP.RefreshTableUI() end
         if DKP.RefreshAuctionUI then DKP.RefreshAuctionUI() end
         if DKP.ShowAuctionUI then DKP.ShowAuctionUI() end
@@ -671,6 +671,18 @@ local function HandleAuctionUpdate(parts, sender)
         auction.currentBidderPlayer = DKP.GetPlayerByCharacter(bidderName) or bidderName
     end
 
+    -- 追加到本地 bids 记录（非管理员客户端也能看到完整出价历史）
+    if bidderName and currentBid then
+        table.insert(auction.bids, {
+            bidder = bidderName,
+            bidderPlayer = auction.currentBidderPlayer or bidderName,
+            amount = currentBid,
+            timestamp = GetTime(),
+            wallTime = time(),
+            isAllIn = isAllIn,
+        })
+    end
+
     -- 延长计时（客户端同步）
     local extendTime = DKP.db.options.auctionExtendTime or 10
     local remaining = auction.endTime - GetTime()
@@ -816,6 +828,11 @@ local function StartGlobalTicker()
         -- 更新UI计时
         if DKP.UpdateAuctionTimers then
             DKP.UpdateAuctionTimers()
+        end
+
+        -- 定时刷新拍卖记录页（进行中拍卖倒计时）
+        if DKP.UpdateAuctionLogTimer then
+            DKP.UpdateAuctionLogTimer()
         end
 
         -- 没有活跃拍卖时停止ticker

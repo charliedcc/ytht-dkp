@@ -302,9 +302,15 @@ local function SetRowData(row, entry, rowIndex)
         row.itemText:SetText("?")
     end
 
-    -- 获胜者
+    -- 获胜者 / 当前出价者
     local state = entry.state or "ENDED"
-    if state == "CANCELLED" then
+    if state == "ACTIVE" then
+        if entry.currentBidder and entry.currentBidder ~= "" then
+            row.winnerText:SetText("|cffFFFF00" .. entry.currentBidder .. "|r")
+        else
+            row.winnerText:SetText("|cff888888等待出价|r")
+        end
+    elseif state == "CANCELLED" then
         row.winnerText:SetText("|cff888888-|r")
     elseif state == "TIE" then
         row.winnerText:SetText("|cffFF4444转人工|r")
@@ -597,10 +603,27 @@ function DKP.RefreshAuctionLogUI()
             -- 构造临时 entry 用于显示
             local bidderDisplay = auction.currentBidder or ""
             local remaining = math.max(0, math.floor(auction.endTime - GetTime()))
+            -- 查找当前出价者的职业
+            local bidderClass = nil
+            if auction.currentBidderPlayer then
+                local pData = DKP.db.players[auction.currentBidderPlayer]
+                if pData then
+                    for _, c in ipairs(pData.characters or {}) do
+                        if c.name == auction.currentBidder then
+                            bidderClass = c.class
+                            break
+                        end
+                    end
+                end
+            end
             local tempEntry = {
                 itemLink = auction.itemLink,
                 state = "ACTIVE",
-                winner = bidderDisplay ~= "" and bidderDisplay or nil,
+                winner = nil,  -- 进行中没有 winner
+                winnerChar = nil,
+                winnerClass = nil,
+                currentBidder = bidderDisplay,
+                currentBidderClass = bidderClass,
                 finalBid = auction.currentBid or 0,
                 startBid = auction.startBid or 0,
                 bidCount = #(auction.bids or {}),
