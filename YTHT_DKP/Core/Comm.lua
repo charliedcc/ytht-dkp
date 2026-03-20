@@ -247,12 +247,7 @@ local function HandleSyncChunk(parts, sender)
             DKP.Print("|cff888888[调试] admins: " .. table.concat(aList, ",") .. "|r")
         end
 
-        local trustOk, trusted = pcall(IsTrustedSender, sender)
-        if not trustOk then
-            DKP.Print("|cffFF4444[调试] IsTrustedSender报错: " .. tostring(trusted) .. "|r")
-            -- 报错时直接放行
-            trusted = true
-        end
+        local trusted = IsTrustedSender(sender)
         DKP.Print("|cff888888[调试] IsTrustedSender结果: " .. tostring(trusted) .. "|r")
         if not trusted then
             DKP.Print("|cffFF8800[调试] SYNC_FULL 被拒绝|r")
@@ -308,7 +303,10 @@ local function GetShortName(fullName)
 end
 
 local function IsTrustedSender(sender)
-    local senderShort = GetShortName(sender)
+    -- 内联提取短名（避免函数引用问题）
+    local senderShort = sender
+    local dashPos = sender:find("-", 1, true)
+    if dashPos then senderShort = sender:sub(1, dashPos - 1) end
     -- 当前团队有 admins 列表时，发送者必须在其中（短名或全称都匹配）
     if DKP.db.admins and next(DKP.db.admins) then
         local trusted = DKP.db.admins[senderShort] == true or DKP.db.admins[sender] == true
