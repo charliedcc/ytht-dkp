@@ -317,34 +317,15 @@ local function HandleAdminSync(parts, sender)
     if newMaster == "" then newMaster = nil end
 
     local senderShort = sender:match("^([^%-]+)") or sender
-    local currentAdmins = DKP.db.admins or {}
-    local hasAdmins = next(currentAdmins) ~= nil
 
-    if hasAdmins then
-        -- 只接受来自已知管理员的同步
-        if not currentAdmins[senderShort] then return end
+    -- 发送者必须在新列表中（说明是合法管理员发出的）
+    if not newAdmins[senderShort] then return end
 
-        -- 保护主管理员：新列表必须包含本地主管理员
-        if DKP.db.masterAdmin and not newAdmins[DKP.db.masterAdmin] then
-            DKP.Print("|cffFF4444拒绝管理员同步: 不允许移除主管理员 " .. DKP.db.masterAdmin .. "|r")
-            return
-        end
-
-        -- 保护自己：如果我是管理员，新列表不能把我移除
-        if DKP.IsOfficer() and not newAdmins[DKP.playerName] then
-            DKP.Print("|cffFF4444拒绝管理员同步: 不允许移除自己的管理员权限|r")
-            return
-        end
-
-        -- 不接受更改本地 masterAdmin（只有本地首次设置时才接受）
-    else
-        -- 首次接收管理员列表：接受 masterAdmin
-        if newMaster then
-            DKP.db.masterAdmin = newMaster
-        end
-    end
-
+    -- 接受管理员列表和主管理员
     DKP.db.admins = newAdmins
+    if newMaster then
+        DKP.db.masterAdmin = newMaster
+    end
     DKP.Print("已同步管理员列表 (来自 " .. senderShort .. ")")
 end
 
@@ -613,6 +594,8 @@ end
 ----------------------------------------------------------------------
 -- 拍卖表序列化/反序列化
 ----------------------------------------------------------------------
+local FIELD_SEP = "\031"  -- unit separator, 用于 item 字段分隔（避免和 itemLink 的 | 冲突）
+
 function DKP.SerializeSheets()
     if not DKP.db or not DKP.db.sheets then return "" end
     local parts = {}
@@ -621,14 +604,14 @@ function DKP.SerializeSheets()
         for _, boss in ipairs(sheet.bosses or {}) do
             local itemParts = {}
             for _, item in ipairs(boss.items or {}) do
-                -- link|winner|winnerClass|dkp|rollID
+                -- 用 \031 分隔 item 字段（itemLink 含 | 不能用 |）
                 table.insert(itemParts, table.concat({
                     item.link or "",
                     item.winner or "",
                     item.winnerClass or "",
                     tostring(item.dkp or 0),
                     tostring(item.rollID or 0),
-                }, "|"))
+                }, FIELD_SEP))
             end
             -- bossName~encounterID~killed~item1^item2^item3
             table.insert(bossParts, table.concat({
@@ -664,7 +647,7 @@ function DKP.DeserializeSheets(text)
                         local itemsStr = bParts[4] or ""
                         if itemsStr ~= "" then
                             for itemStr in itemsStr:gmatch("[^%^]+") do
-                                local iParts = { strsplit("|", itemStr) }
+                                local iParts = { strsplit(FIELD_SEP, itemStr) }
                                 table.insert(boss.items, {
                                     link = iParts[1] or "",
                                     winner = iParts[2] or "",
@@ -768,66 +751,10 @@ local function HandleSheetsChunk(parts, sender)
 
         local senderShort = sender:match("^([^%-]+)") or sender
 
-        -- 只有主管理员需要确认，其他人直接接受
-        if DKP.db.masterAdmin and DKP.db.masterAdmin == DKP.playerName then
-            -- 主管理员：自定义确认对话框
-            DKP.pendingSheetsData = newSheets
-            DKP.pendingSheetsSender = senderShort
-            if not DKP._sheetsSyncDialog then
-                local d = CreateFrame("Frame", "YTHTDKPSheetsSyncDialog", UIParent, "BackdropTemplate")
-                d:SetSize(320, 120)
-                d:SetPoint("CENTER")
-                d:SetFrameStrata("FULLSCREEN_DIALOG")
-                d:SetFrameLevel(250)
-                d:EnableMouse(true)
-                d:SetBackdrop({
-                    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-                    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-                    edgeSize = 16,
-                    insets = { left = 4, right = 4, top = 4, bottom = 4 },
-                })
-                d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
-                d:Hide()
-                local text = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-                text:SetPoint("TOP", 0, -16)
-                text:SetWidth(280)
-                d.text = text
-                local acceptBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
-                acceptBtn:SetSize(80, 24)
-                acceptBtn:SetPoint("BOTTOMLEFT", 20, 12)
-                acceptBtn:SetText("接受")
-                d.acceptBtn = acceptBtn
-                local rejectBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
-                rejectBtn:SetSize(80, 24)
-                rejectBtn:SetPoint("BOTTOMRIGHT", -20, 12)
-                rejectBtn:SetText("拒绝")
-                rejectBtn:SetScript("OnClick", function()
-                    DKP.Print("已拒绝掉落列表同步")
-                    DKP.pendingSheetsData = nil
-                    DKP.pendingSheetsSender = nil
-                    d:Hide()
-                end)
-                DKP._sheetsSyncDialog = d
-            end
-            local d = DKP._sheetsSyncDialog
-            d.text:SetText("收到来自 " .. senderShort .. " 的掉落列表同步\n是否接受覆盖？")
-            d.acceptBtn:SetScript("OnClick", function()
-                if DKP.pendingSheetsData then
-                    DKP.db.sheets = DKP.pendingSheetsData
-                    DKP.Print("已接受掉落列表同步 (来自 " .. (DKP.pendingSheetsSender or "?") .. ")")
-                    if DKP.RefreshTableUI then DKP.RefreshTableUI() end
-                    DKP.pendingSheetsData = nil
-                    DKP.pendingSheetsSender = nil
-                end
-                d:Hide()
-            end)
-            d:Show()
-        else
-            -- 非主管理员/普通团员：直接接受
-            DKP.db.sheets = newSheets
-            DKP.Print("已同步掉落列表 (来自 " .. senderShort .. ")")
-            if DKP.RefreshTableUI then DKP.RefreshTableUI() end
-        end
+        -- 直接接受掉落列表同步（来自管理员的数据默认信任）
+        DKP.db.sheets = newSheets
+        DKP.Print("已同步掉落列表 (来自 " .. senderShort .. ")")
+        if DKP.RefreshTableUI then DKP.RefreshTableUI() end
     end
 end
 

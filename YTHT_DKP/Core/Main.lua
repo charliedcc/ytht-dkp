@@ -1240,14 +1240,13 @@ end
 ----------------------------------------------------------------------
 function DKP.OnInitialized()
     -- 初始化管理员列表
-    -- 只有在本地已有玩家数据时才自动设为管理员（说明是首次创建数据的人）
-    -- 新装插件的用户不自动成为管理员，等待从管理员同步权限
+    -- 每个人默认成为自己的管理员（可以独立使用插件）
+    -- 在接受到其他管理员的 ADMIN_SYNC 时会覆盖本地权限
     if not DKP.db.admins then DKP.db.admins = {} end
-    if not next(DKP.db.admins) and DKP.db.players and next(DKP.db.players) then
+    if not next(DKP.db.admins) then
         DKP.db.admins[DKP.playerName] = true
     end
-    -- 首位管理员自动成为主管理员（不可被远程移除）
-    if not DKP.db.masterAdmin and next(DKP.db.admins) then
+    if not DKP.db.masterAdmin then
         DKP.db.masterAdmin = DKP.playerName
     end
 
