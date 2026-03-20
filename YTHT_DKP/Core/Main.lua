@@ -1738,6 +1738,12 @@ function DKP.OnInitialized()
     -- 创建主框架
     DKP.MainFrame = CreateMainFrame()
 
+    -- 设置团队名显示
+    if DKP.MainFrame.teamBtn and DKP.MainFrame.teamBtn.text then
+        local teamName = DKP.GetCurrentTeamName and DKP.GetCurrentTeamName() or "本地"
+        DKP.MainFrame.teamBtn.text:SetText(teamName)
+    end
+
     -- 恢复UI位置
     if DKP.db.point and #DKP.db.point == 5 then
         DKP.MainFrame:ClearAllPoints()

@@ -2183,8 +2183,13 @@ function DKP.ShowVersionDialog()
 
     -- 初始化结果
     DKP._versionResults = {}
-    -- 自己先加入
-    DKP._versionResults[DKP.playerName] = { version = DKP.version, name = DKP.playerName, time = GetTime() }
+    -- 自己先加入（含团队信息）
+    DKP._versionResults[DKP.playerName] = {
+        version = DKP.version, name = DKP.playerName,
+        teamName = DKP.GetCurrentTeamName and DKP.GetCurrentTeamName() or "?",
+        teamID = DKP.GetCurrentTeamID and DKP.GetCurrentTeamID() or "?",
+        time = GetTime(),
+    }
 
     -- 刷新函数
     local function RefreshList()
@@ -2303,7 +2308,12 @@ function DKP.ShowVersionDialog()
 
     d.refreshBtn:SetScript("OnClick", function()
         DKP._versionResults = {}
-        DKP._versionResults[DKP.playerName] = { version = DKP.version, name = DKP.playerName, time = GetTime() }
+        DKP._versionResults[DKP.playerName] = {
+            version = DKP.version, name = DKP.playerName,
+            teamName = DKP.GetCurrentTeamName and DKP.GetCurrentTeamName() or "?",
+            teamID = DKP.GetCurrentTeamID and DKP.GetCurrentTeamID() or "?",
+            time = GetTime(),
+        }
         SendQuery()
     end)
 

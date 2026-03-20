@@ -239,7 +239,11 @@ local function HandleSyncChunk(parts, sender)
         pendingSync[sender] = nil
 
         -- 信任检查
-        if not IsTrustedSender(sender) then return end
+        DKP.Print("|cff888888[调试] SYNC_FULL 收到 " .. #text .. " 字节, 来自 " .. sender .. "|r")
+        if not IsTrustedSender(sender) then
+            DKP.Print("|cffFF8800[调试] SYNC_FULL 被拒绝: 发送者不受信任|r")
+            return
+        end
 
         -- 应用同步数据
         local playersData = DeserializePlayers(text)
@@ -278,9 +282,16 @@ end
 ----------------------------------------------------------------------
 local function IsTrustedSender(sender)
     local senderShort = sender:match("^([^%-]+)") or sender
-    -- 当前团队有 admins 列表时，发送者必须在其中
+    -- 当前团队有 admins 列表时，发送者必须在其中（短名或全称都匹配）
     if DKP.db.admins and next(DKP.db.admins) then
-        return DKP.db.admins[senderShort] == true
+        local trusted = DKP.db.admins[senderShort] == true or DKP.db.admins[sender] == true
+        if not trusted then
+            DKP.Print("|cffFF8800[调试] 不信任发送者: " .. senderShort .. " / " .. sender .. "|r")
+            local adminList = {}
+            for n in pairs(DKP.db.admins) do table.insert(adminList, n) end
+            DKP.Print("|cff888888[调试] 当前admins: " .. table.concat(adminList, ", ") .. "|r")
+        end
+        return trusted
     end
     -- 没有 admins 列表（应该不会发生）, 允许
     return true
@@ -416,11 +427,15 @@ local function HandleTeamSync(parts, sender)
         return
     end
 
-    -- 检查我的角色名是否在成员列表中
+    -- 检查我的角色名是否在成员列表中（短名和全称都匹配）
     local myName = DKP.playerName
+    local myFullName = DKP.playerFullName
     local isMember = false
     for name in charsStr:gmatch("[^;]+") do
-        if name == myName then isMember = true; break end
+        local nameShort = name:match("^([^%-]+)") or name
+        if name == myName or nameShort == myName or name == myFullName then
+            isMember = true; break
+        end
     end
 
     if not isMember then
