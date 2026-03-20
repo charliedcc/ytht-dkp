@@ -850,9 +850,14 @@ function DKP.ArchiveActivity(activityName)
     if not DKP.db then return end
     if not DKP.db.activities then DKP.db.activities = {} end
 
+    -- 起始时间：优先用 session.startTime，其次用第一条log的时间
+    local startT = DKP.db.session.startTime
+    if not startT and DKP.db.log and #DKP.db.log > 0 then
+        startT = DKP.db.log[1].timestamp
+    end
     local activity = {
         name = activityName or date("%m-%d %H:%M"),
-        startTime = DKP.db.session.startTime or time(),
+        startTime = startT or time(),
         endTime = time(),
         log = DKP.db.log or {},
         auctionHistory = DKP.db.auctionHistory or {},
@@ -870,6 +875,7 @@ function DKP.ArchiveActivity(activityName)
     -- 重置 session
     DKP.db.session.active = false
     DKP.db.session.gathered = false
+    DKP.db.session.startTime = nil
     wipe(DKP.db.session.bossKills)
     if DKP.db.session.wipeCounts then wipe(DKP.db.session.wipeCounts) end
 
@@ -1276,6 +1282,7 @@ function DKP.OnInitialized()
             end
             DKP.db.session.active = true
             DKP.db.session.gathered = true
+            if not DKP.db.session.startTime then DKP.db.session.startTime = time() end
             local points = DKP.db.options.gatherPoints or 3
             local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
             local names = {}
@@ -1320,10 +1327,12 @@ function DKP.OnInitialized()
         elseif cmd == "session" then
             if arg1 == "start" then
                 DKP.db.session.active = true
+                if not DKP.db.session.startTime then DKP.db.session.startTime = time() end
                 DKP.Print("活动开始")
             elseif arg1 == "end" or arg1 == "stop" then
                 DKP.db.session.active = false
                 DKP.db.session.gathered = false
+                DKP.db.session.startTime = nil
                 wipe(DKP.db.session.bossKills)
                 if DKP.db.session.wipeCounts then wipe(DKP.db.session.wipeCounts) end
                 DKP.Print("活动结束，session已重置")

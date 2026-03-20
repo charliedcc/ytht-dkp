@@ -58,6 +58,7 @@ local defaults = {
     session = {
         active = false,
         gathered = false,
+        startTime = nil,    -- 活动开始时间（集合/session start 时记录）
         bossKills = {},     -- encounterID -> true (本次活动已加分的boss)
         wipeCounts = {},    -- encounterID -> 团灭次数
         firstKills = {},    -- encounterID -> true (历史首杀记录，不随session重置)

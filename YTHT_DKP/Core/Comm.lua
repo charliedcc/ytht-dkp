@@ -502,6 +502,25 @@ function DKP.BroadcastFullSync()
             SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, channel)
         end
     end
+
+    -- 广播完整活动数据（log + auctionHistory）
+    if DKP.SerializeActivity then
+        local act = {
+            name = "sync",
+            startTime = DKP.db.session and DKP.db.session.startTime or 0,
+            endTime = time(),
+            log = DKP.db.log or {},
+            auctionHistory = DKP.db.auctionHistory or {},
+            sheets = {},  -- sheets 已单独广播
+        }
+        local actData = DKP.SerializeActivity(act)
+        if actData ~= "" then
+            local channel = GetChannel()
+            if channel then
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_ACTIVITY", actData, channel)
+            end
+        end
+    end
 end
 
 ----------------------------------------------------------------------
@@ -576,6 +595,55 @@ function DKP.DeserializeSheets(text)
 end
 
 local pendingOptSync = {}
+local pendingActivitySync = {}
+
+----------------------------------------------------------------------
+-- Activity 同步接收（log + auctionHistory）
+----------------------------------------------------------------------
+local function HandleActivityChunk(parts, sender)
+    local chunkIndex = tonumber(parts[2])
+    local totalChunks = tonumber(parts[3])
+    local chunkData = parts[4] or ""
+    if not chunkIndex or not totalChunks then return end
+
+    local sKey = sender .. "_activity"
+    if not pendingActivitySync[sKey] then
+        pendingActivitySync[sKey] = { chunks = {}, expected = totalChunks }
+    end
+    local sync = pendingActivitySync[sKey]
+    sync.chunks[chunkIndex] = chunkData
+
+    local received = 0
+    for _ in pairs(sync.chunks) do received = received + 1 end
+
+    if received >= sync.expected then
+        local fullData = {}
+        for i = 1, sync.expected do
+            table.insert(fullData, sync.chunks[i] or "")
+        end
+        local text = table.concat(fullData)
+        pendingActivitySync[sKey] = nil
+
+        if DKP.DeserializeActivity then
+            local act = DKP.DeserializeActivity(text)
+            if act then
+                local senderShort = sender:match("^([^%-]+)") or sender
+                -- 同步 log（替换）
+                if act.log and #act.log > 0 then
+                    DKP.db.log = act.log
+                end
+                -- 同步 auctionHistory（替换）
+                if act.auctionHistory and #act.auctionHistory > 0 then
+                    DKP.db.auctionHistory = act.auctionHistory
+                end
+                DKP.Print("已同步活动数据 (来自 " .. senderShort .. "): " ..
+                    #(act.log or {}) .. " 条日志, " .. #(act.auctionHistory or {}) .. " 条拍卖")
+                if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+            end
+        end
+    end
+end
 local pendingSheetsSync = {}
 
 ----------------------------------------------------------------------
@@ -709,6 +777,8 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
             HandleOptionsChunk(parts, sender)
         elseif msgType == "SYNC_SHEETS" then
             HandleSheetsChunk(parts, sender)
+        elseif msgType == "SYNC_ACTIVITY" then
+            HandleActivityChunk(parts, sender)
         elseif msgType == "ADMIN_SYNC" then
             HandleAdminSync(parts, sender)
         elseif msgType == "HISTORY_ENTRY" then

@@ -1351,7 +1351,7 @@ local function ShowBulkAdjustDialog()
                 local details = {}
                 for name, data in pairs(DKP.db.players) do
                     if (data.dkp or 0) > 0 then
-                        local decay = math.ceil(data.dkp * pct / 100)
+                        local decay = math.floor(data.dkp * pct / 100 + 0.5)
                         table.insert(details, { name = name, amount = -decay })
                     end
                 end
@@ -1366,7 +1366,7 @@ local function ShowBulkAdjustDialog()
 
         local decayNote = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         decayNote:SetPoint("TOPLEFT", 20, -182)
-        decayNote:SetText("|cff888888扣除分数向上取整，仅对正DKP玩家生效|r")
+        decayNote:SetText("|cff888888扣除分数四舍五入，仅对正DKP玩家生效|r")
 
         local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
         cancelBtn:SetSize(80, 24)
@@ -1933,7 +1933,7 @@ end
 
 local function ExportTSV_DKP()
     local lines = {}
-    table.insert(lines, "玩家名\t角色(职业)\t起始分\t集合\t解散\t伐木分\t奖励\t扣分\t消费\t结算")
+    table.insert(lines, "玩家名\t角色(职业)\t起始分\t集合\t解散\t伐木分\t奖励\t扣分\t消费\t衰减\t结算")
 
     if not DKP.db or not DKP.db.players then return "" end
 
@@ -1941,7 +1941,7 @@ local function ExportTSV_DKP()
     local stats = {}  -- name -> { gather, dismiss, boss, reward, penalty, consume }
     local totalChange = {}  -- name -> 总变动
     for name in pairs(DKP.db.players) do
-        stats[name] = { gather = 0, dismiss = 0, boss = 0, reward = 0, penalty = 0, consume = 0 }
+        stats[name] = { gather = 0, dismiss = 0, boss = 0, decay = 0, reward = 0, penalty = 0, consume = 0 }
         totalChange[name] = 0
     end
 
@@ -1956,12 +1956,12 @@ local function ExportTSV_DKP()
             local isDismiss = (reason == "解散")
 
             if entry.type == "decay" then
-                -- 衰减明细：每人不同额度
+                -- 衰减明细：每人不同额度 → 单独衰减列
                 for _, d in ipairs(entry.players) do
                     local name = type(d) == "table" and d.name or d
                     local amt = type(d) == "table" and d.amount or entry.amount
                     if stats[name] then
-                        stats[name].boss = stats[name].boss + amt
+                        stats[name].decay = stats[name].decay + amt
                         totalChange[name] = totalChange[name] + amt
                     end
                 end
@@ -2014,7 +2014,7 @@ local function ExportTSV_DKP()
             table.insert(charParts, char.name .. "(" .. cn .. ")")
         end
 
-        local s = stats[name] or { gather = 0, dismiss = 0, boss = 0, reward = 0, penalty = 0, consume = 0 }
+        local s = stats[name] or { gather = 0, dismiss = 0, boss = 0, decay = 0, reward = 0, penalty = 0, consume = 0 }
         local currentDKP = data.dkp or 0
         local startDKP = currentDKP - (totalChange[name] or 0)
 
@@ -2028,6 +2028,7 @@ local function ExportTSV_DKP()
             s.reward ~= 0 and ("+" .. s.reward) or "0",
             s.penalty ~= 0 and tostring(s.penalty) or "0",
             s.consume ~= 0 and tostring(s.consume) or "0",
+            s.decay ~= 0 and tostring(s.decay) or "0",
             tostring(currentDKP),
         }, "\t"))
     end
@@ -3160,6 +3161,7 @@ function DKP.InitDKPPanel()
         end
         DKP.db.session.active = true
         DKP.db.session.gathered = true
+        if not DKP.db.session.startTime then DKP.db.session.startTime = time() end
         local points = DKP.db.options.gatherPoints or 3
         local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
         local names = {}
