@@ -2400,21 +2400,37 @@ function DKP.ShowExportDialog(preloadText)
 
         -- 按钮回调
         modeActivity:SetScript("OnClick", function()
+            DKP.Print("[导出] 活动记录按钮点击")
             d.hint:SetText("活动记录: 包含DKP/日志/拍卖/掉落列表完整数据，可通过导入恢复")
+            if not DKP.SerializeActivity then
+                DKP.Print("[导出] 错误: SerializeActivity 未加载")
+                d.editBox:SetText("错误: SerializeActivity 未加载")
+                return
+            end
+            local pCount = 0
+            if DKP.db.players then for _ in pairs(DKP.db.players) do pCount = pCount + 1 end end
+            local lCount = DKP.db.log and #DKP.db.log or 0
+            local hCount = DKP.db.auctionHistory and #DKP.db.auctionHistory or 0
+            local sCount = 0
+            if DKP.db.sheets then for _ in pairs(DKP.db.sheets) do sCount = sCount + 1 end end
+            DKP.Print("[导出] 数据: " .. pCount .. "玩家, " .. lCount .. "日志, " .. hCount .. "拍卖, " .. sCount .. "副本")
             local act = {
                 name = date("%m-%d %H:%M") .. " 当前",
                 startTime = DKP.db.session and DKP.db.session.startTime or time(),
                 endTime = time(),
-                players = DKP.db.players,
-                log = DKP.db.log,
-                auctionHistory = DKP.db.auctionHistory,
-                sheets = DKP.db.sheets,
+                players = DKP.db.players or {},
+                log = DKP.db.log or {},
+                auctionHistory = DKP.db.auctionHistory or {},
+                sheets = DKP.db.sheets or {},
             }
-            local ok, result = pcall(DKP.SerializeActivity, act)
+            DKP.Print("[导出] 开始序列化...")
+            local ok, text = pcall(DKP.SerializeActivity, act)
             if ok then
-                d.editBox:SetText(result or "")
+                DKP.Print("[导出] 序列化完成: " .. #(text or "") .. " 字节")
+                d.editBox:SetText(text or "")
             else
-                d.editBox:SetText("序列化失败: " .. tostring(result))
+                DKP.Print("[导出] 序列化失败: " .. tostring(text))
+                d.editBox:SetText("序列化失败: " .. tostring(text))
             end
             d.editBox:HighlightText()
             d.editBox:SetFocus()
@@ -2449,7 +2465,9 @@ function DKP.ShowExportDialog(preloadText)
     end
     exportDialog:Show()
     if not preloadText then
-        exportDialog.modeActivity:GetScript("OnClick")(exportDialog.modeActivity)
+        -- 默认加载活动记录模式
+        local onClickFn = exportDialog.modeActivity:GetScript("OnClick")
+        if onClickFn then onClickFn(exportDialog.modeActivity) end
     else
         exportDialog.editBox:HighlightText()
         exportDialog.editBox:SetFocus()
