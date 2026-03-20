@@ -1200,6 +1200,41 @@ local function ShowImportDialog()
                 DKP.Print("请输入导入内容")
                 return
             end
+            -- 自动检测活动记录格式
+            if text:match("^%[YTHT_DKP_ACTIVITY_V1%]") then
+                local activity = DKP.DeserializeActivity(text)
+                if activity then
+                    -- 导入为归档活动
+                    if not DKP.db.activities then DKP.db.activities = {} end
+                    table.insert(DKP.db.activities, activity)
+                    -- 恢复管理员信息
+                    if activity.admins and next(activity.admins) then
+                        for n in pairs(activity.admins) do
+                            if not DKP.db.admins then DKP.db.admins = {} end
+                            DKP.db.admins[n] = true
+                        end
+                    end
+                    if activity.masterAdmin and not DKP.db.masterAdmin then
+                        DKP.db.masterAdmin = activity.masterAdmin
+                    end
+                    -- 恢复/合并玩家数据
+                    if activity.players then
+                        for name, data in pairs(activity.players) do
+                            if not DKP.db.players[name] then
+                                DKP.db.players[name] = data
+                            end
+                        end
+                    end
+                    DKP.hasUnsavedChanges = true
+                    DKP.Print("活动记录已导入: " .. (activity.name or ""))
+                    DKP.Print("  日志: " .. #(activity.log or {}) .. " 条, 拍卖: " .. #(activity.auctionHistory or {}) .. " 条")
+                    DKP.RefreshDKPUI()
+                    d:Hide()
+                else
+                    DKP.Print("活动记录格式解析失败")
+                end
+                return
+            end
             local count = 0
             if d.currentMode == "dkp" then
                 count = ImportDKPData(text)
@@ -1625,40 +1660,477 @@ local function ShowSettingsDialog()
 end
 
 ----------------------------------------------------------------------
--- 对话框：导出DKP数据
+-- 活动序列化/反序列化
+----------------------------------------------------------------------
+local function GetWowheadURL(itemLink)
+    if not itemLink then return "" end
+    local itemID = itemLink:match("item:(%d+)")
+    if itemID then return "https://cn.wowhead.com/item=" .. itemID end
+    return ""
+end
+
+local function SerializeLogEntry(entry)
+    local playerField
+    if entry.players then
+        if type(entry.players[1]) == "table" then
+            local parts = {}
+            for _, d in ipairs(entry.players) do
+                table.insert(parts, d.name .. ":" .. tostring(d.amount))
+            end
+            playerField = table.concat(parts, ";")
+        else
+            playerField = table.concat(entry.players, ";")
+        end
+    else
+        playerField = entry.player or ""
+    end
+    return table.concat({
+        tostring(entry.timestamp or 0),
+        entry.type or "",
+        playerField,
+        tostring(entry.amount or 0),
+        (entry.reason or ""):gsub(",", ";"),
+        entry.officer or "",
+        entry.reversed and "1" or "0",
+    }, ",")
+end
+
+function DKP.SerializeActivity(activity)
+    local lines = {}
+    table.insert(lines, "[YTHT_DKP_ACTIVITY_V1]")
+
+    -- META
+    table.insert(lines, "[META]")
+    table.insert(lines, "name=" .. (activity.name or ""))
+    table.insert(lines, "startTime=" .. tostring(activity.startTime or 0))
+    table.insert(lines, "endTime=" .. tostring(activity.endTime or 0))
+
+    -- ADMINS
+    if DKP.db.admins and next(DKP.db.admins) then
+        table.insert(lines, "[ADMINS]")
+        local names = {}
+        for n in pairs(DKP.db.admins) do table.insert(names, n) end
+        table.insert(lines, table.concat(names, ","))
+    end
+    if DKP.db.masterAdmin then
+        table.insert(lines, "[MASTER]")
+        table.insert(lines, DKP.db.masterAdmin)
+    end
+
+    -- PLAYERS
+    local players = activity.players or DKP.db.players or {}
+    table.insert(lines, "[PLAYERS]")
+    for name, data in pairs(players) do
+        local charParts = {}
+        for _, char in ipairs(data.characters or {}) do
+            table.insert(charParts, char.name .. ":" .. (char.class or "WARRIOR"))
+        end
+        table.insert(lines, name .. "," .. tostring(data.dkp or 0) .. "," .. table.concat(charParts, ","))
+    end
+
+    -- LOG
+    local log = activity.log or {}
+    table.insert(lines, "[LOG]")
+    for _, entry in ipairs(log) do
+        table.insert(lines, SerializeLogEntry(entry))
+    end
+
+    -- AUCTION_HISTORY
+    local history = activity.auctionHistory or {}
+    table.insert(lines, "[AUCTION_HISTORY]")
+    for _, entry in ipairs(history) do
+        local bidsStr = ""
+        if entry.bids and #entry.bids > 0 then
+            local bp = {}
+            for _, b in ipairs(entry.bids) do
+                table.insert(bp, (b.bidder or "") .. ":" .. tostring(b.amount or 0) .. ":" .. (b.isAllIn and "1" or "0"))
+            end
+            bidsStr = table.concat(bp, ";")
+        end
+        table.insert(lines, table.concat({
+            entry.id or "",
+            entry.itemLink or "",
+            entry.state or "ENDED",
+            entry.winner or "",
+            entry.winnerChar or "",
+            entry.winnerClass or "",
+            tostring(entry.finalBid or 0),
+            tostring(entry.startBid or 0),
+            tostring(entry.bidCount or 0),
+            tostring(entry.timestamp or 0),
+            entry.officer or "",
+            entry.encounterName or "",
+            entry.instanceName or "",
+            bidsStr,
+        }, "|"))
+    end
+
+    -- SHEETS
+    local sheets = activity.sheets or {}
+    table.insert(lines, "[SHEETS]")
+    local sheetsText = DKP.SerializeSheets and DKP.SerializeSheets() or ""
+    -- 如果是归档活动，用活动自己的 sheets
+    if activity.sheets and next(activity.sheets) then
+        -- 临时替换序列化
+        local saved = DKP.db.sheets
+        DKP.db.sheets = activity.sheets
+        sheetsText = DKP.SerializeSheets and DKP.SerializeSheets() or ""
+        DKP.db.sheets = saved
+    end
+    if sheetsText ~= "" then
+        table.insert(lines, sheetsText)
+    end
+
+    table.insert(lines, "[END]")
+    return table.concat(lines, "\n")
+end
+
+function DKP.DeserializeActivity(text)
+    if not text:match("^%[YTHT_DKP_ACTIVITY_V1%]") then return nil end
+
+    local activity = {
+        name = "",
+        startTime = 0,
+        endTime = 0,
+        log = {},
+        auctionHistory = {},
+        sheets = {},
+    }
+    local admins = {}
+    local masterAdmin = nil
+    local players = {}
+
+    local currentSection = nil
+    local sheetsText = {}
+
+    for line in text:gmatch("[^\r\n]+") do
+        local section = line:match("^%[(%u[%u_]+)%]$")
+        if section then
+            -- 处理上一个 SHEETS 段
+            if currentSection == "SHEETS" and #sheetsText > 0 then
+                local st = table.concat(sheetsText, "\n")
+                if DKP.DeserializeSheets then
+                    activity.sheets = DKP.DeserializeSheets(st)
+                end
+            end
+            currentSection = section
+            sheetsText = {}
+        elseif currentSection == "META" then
+            local key, val = line:match("^(.-)=(.*)$")
+            if key == "name" then activity.name = val
+            elseif key == "startTime" then activity.startTime = tonumber(val) or 0
+            elseif key == "endTime" then activity.endTime = tonumber(val) or 0
+            end
+        elseif currentSection == "ADMINS" then
+            for name in line:gmatch("[^,]+") do
+                admins[name:match("^%s*(.-)%s*$")] = true
+            end
+        elseif currentSection == "MASTER" then
+            masterAdmin = line:match("^%s*(.-)%s*$")
+        elseif currentSection == "PLAYERS" then
+            local parts = {}
+            for part in line:gmatch("[^,]+") do
+                table.insert(parts, part:match("^%s*(.-)%s*$"))
+            end
+            if #parts >= 2 then
+                local name = parts[1]
+                local dkp = tonumber(parts[2]) or 0
+                local characters = {}
+                for i = 3, #parts do
+                    local cn, cc = parts[i]:match("^(.+):(%u+)$")
+                    if cn then table.insert(characters, { name = cn, class = cc }) end
+                end
+                players[name] = { dkp = dkp, characters = characters, note = "", lastUpdated = time() }
+            end
+        elseif currentSection == "LOG" then
+            local parts = {}
+            for part in line:gmatch("[^,]+") do table.insert(parts, part) end
+            if #parts >= 6 then
+                local entry = {
+                    timestamp = tonumber(parts[1]) or 0,
+                    type = parts[2] or "award",
+                    amount = tonumber(parts[4]) or 0,
+                    reason = (parts[5] or ""):gsub(";", ","),
+                    officer = parts[6] or "",
+                    reversed = parts[7] == "1",
+                }
+                local playerField = parts[3] or ""
+                if playerField:find(";") then
+                    -- 批量或衰减
+                    if playerField:find(":%-?%d") then
+                        -- 衰减明细: name:amount;name:amount
+                        entry.players = {}
+                        for pd in playerField:gmatch("[^;]+") do
+                            local n, a = pd:match("^(.+):(%-?%d+)$")
+                            if n then table.insert(entry.players, { name = n, amount = tonumber(a) }) end
+                        end
+                    else
+                        entry.players = {}
+                        for n in playerField:gmatch("[^;]+") do table.insert(entry.players, n) end
+                    end
+                else
+                    entry.player = playerField
+                end
+                table.insert(activity.log, entry)
+            end
+        elseif currentSection == "AUCTION_HISTORY" then
+            local parts = {}
+            for part in line:gmatch("[^|]+") do table.insert(parts, part) end
+            if #parts >= 10 then
+                local bids = {}
+                if parts[14] and parts[14] ~= "" then
+                    for bp in parts[14]:gmatch("[^;]+") do
+                        local bidder, amt, allIn = bp:match("^(.+):(%d+):([01])$")
+                        if bidder then
+                            table.insert(bids, { bidder = bidder, amount = tonumber(amt), isAllIn = allIn == "1" })
+                        end
+                    end
+                end
+                table.insert(activity.auctionHistory, {
+                    id = parts[1],
+                    itemLink = parts[2],
+                    state = parts[3],
+                    winner = parts[4] ~= "" and parts[4] or nil,
+                    winnerChar = parts[5] ~= "" and parts[5] or nil,
+                    winnerClass = parts[6] ~= "" and parts[6] or nil,
+                    finalBid = tonumber(parts[7]) or 0,
+                    startBid = tonumber(parts[8]) or 0,
+                    bidCount = tonumber(parts[9]) or 0,
+                    timestamp = tonumber(parts[10]) or 0,
+                    officer = parts[11] or "",
+                    encounterName = parts[12] ~= "" and parts[12] or nil,
+                    instanceName = parts[13] ~= "" and parts[13] or nil,
+                    bids = bids,
+                })
+            end
+        elseif currentSection == "SHEETS" then
+            table.insert(sheetsText, line)
+        end
+    end
+
+    -- 处理最后的 SHEETS 段
+    if currentSection == "SHEETS" and #sheetsText > 0 then
+        local st = table.concat(sheetsText, "\n")
+        if DKP.DeserializeSheets then
+            activity.sheets = DKP.DeserializeSheets(st)
+        end
+    end
+
+    activity.players = players
+    activity.admins = admins
+    activity.masterAdmin = masterAdmin
+    return activity
+end
+
+----------------------------------------------------------------------
+-- TSV 表格导出（粘贴到金山表格/Google Sheets）
+----------------------------------------------------------------------
+-- 判断 reason 是否与装备消费相关
+local function IsLootReason(reason)
+    if not reason then return false end
+    return reason:find("拍卖") or reason:find("手动分配")
+end
+
+local function ExportTSV_DKP()
+    local lines = {}
+    table.insert(lines, "玩家名\t角色(职业)\t起始分\t集合\t解散\t伐木分\t奖励\t扣分\t消费\t结算")
+
+    if not DKP.db or not DKP.db.players then return "" end
+
+    -- 为每个玩家汇总各分类
+    local stats = {}  -- name -> { gather, dismiss, boss, reward, penalty, consume }
+    local totalChange = {}  -- name -> 总变动
+    for name in pairs(DKP.db.players) do
+        stats[name] = { gather = 0, dismiss = 0, boss = 0, reward = 0, penalty = 0, consume = 0 }
+        totalChange[name] = 0
+    end
+
+    -- 遍历 log 分类
+    for _, entry in ipairs(DKP.db.log or {}) do
+        if entry.reversed then
+            -- 跳过已冲红的条目（冲红条目会有对应的 reverse 条目处理回退）
+        elseif entry.players then
+            -- 批量条目
+            local reason = entry.reason or ""
+            local isGather = (reason == "集合")
+            local isDismiss = (reason == "解散")
+
+            if entry.type == "decay" then
+                -- 衰减明细：每人不同额度
+                for _, d in ipairs(entry.players) do
+                    local name = type(d) == "table" and d.name or d
+                    local amt = type(d) == "table" and d.amount or entry.amount
+                    if stats[name] then
+                        stats[name].boss = stats[name].boss + amt
+                        totalChange[name] = totalChange[name] + amt
+                    end
+                end
+            else
+                -- 统一额度批量
+                for _, name in ipairs(entry.players) do
+                    if stats[name] then
+                        if isGather then
+                            stats[name].gather = stats[name].gather + entry.amount
+                        elseif isDismiss then
+                            stats[name].dismiss = stats[name].dismiss + entry.amount
+                        else
+                            stats[name].boss = stats[name].boss + entry.amount
+                        end
+                        totalChange[name] = totalChange[name] + entry.amount
+                    end
+                end
+            end
+        elseif entry.player and stats[entry.player] then
+            -- 单人条目
+            local name = entry.player
+            local amt = entry.amount or 0
+            local reason = entry.reason or ""
+
+            if entry.type == "reverse" then
+                -- 冲红条目：反向归类（简化处理：计入对应分类）
+                if IsLootReason(reason:gsub("^冲红: ", "")) then
+                    stats[name].consume = stats[name].consume + amt
+                elseif amt >= 0 then
+                    stats[name].reward = stats[name].reward + amt
+                else
+                    stats[name].penalty = stats[name].penalty + amt
+                end
+            elseif IsLootReason(reason) then
+                stats[name].consume = stats[name].consume + amt
+            elseif amt >= 0 then
+                stats[name].reward = stats[name].reward + amt
+            else
+                stats[name].penalty = stats[name].penalty + amt
+            end
+            totalChange[name] = totalChange[name] + amt
+        end
+    end
+
+    -- 输出每个玩家的行
+    for name, data in pairs(DKP.db.players) do
+        local charParts = {}
+        for _, char in ipairs(data.characters or {}) do
+            local cn = CLASS_NAMES[char.class] or char.class or "未知"
+            table.insert(charParts, char.name .. "(" .. cn .. ")")
+        end
+
+        local s = stats[name] or { gather = 0, dismiss = 0, boss = 0, reward = 0, penalty = 0, consume = 0 }
+        local currentDKP = data.dkp or 0
+        local startDKP = currentDKP - (totalChange[name] or 0)
+
+        table.insert(lines, table.concat({
+            name,
+            table.concat(charParts, ", "),
+            tostring(startDKP),
+            s.gather ~= 0 and ("+" .. s.gather) or "0",
+            s.dismiss ~= 0 and ("+" .. s.dismiss) or "0",
+            s.boss ~= 0 and ((s.boss >= 0 and "+" or "") .. s.boss) or "0",
+            s.reward ~= 0 and ("+" .. s.reward) or "0",
+            s.penalty ~= 0 and tostring(s.penalty) or "0",
+            s.consume ~= 0 and tostring(s.consume) or "0",
+            tostring(currentDKP),
+        }, "\t"))
+    end
+    return table.concat(lines, "\n")
+end
+
+local function ExportTSV_Loot()
+    local lines = {}
+    table.insert(lines, "副本\tBoss\t装备\t获得者(职业)\tDKP\t状态\tWowhead链接")
+    for sheetName, sheet in pairs(DKP.db.sheets or {}) do
+        for _, boss in ipairs(sheet.bosses or {}) do
+            for _, item in ipairs(boss.items or {}) do
+                local itemName = ""
+                if item.link then
+                    itemName = item.link:match("%[(.-)%]") or item.link
+                end
+                local winnerDisplay = ""
+                if item.winner and item.winner ~= "" then
+                    local wc = CLASS_NAMES[item.winnerClass] or ""
+                    winnerDisplay = item.winner .. (wc ~= "" and ("(" .. wc .. ")") or "")
+                end
+                local status = (item.winner and item.winner ~= "") and "已分配" or "未分配"
+                if item.winner == "转人工" then status = "转人工" end
+                table.insert(lines, table.concat({
+                    sheetName, boss.name or "", itemName, winnerDisplay,
+                    tostring(item.dkp or 0), status, GetWowheadURL(item.link)
+                }, "\t"))
+            end
+        end
+    end
+    return table.concat(lines, "\n")
+end
+
+local function ExportTSV_Log()
+    local lines = {}
+    table.insert(lines, "时间\t类型\t玩家\t数额\t原因\t操作员")
+    local typeNames = { award = "加分", deduct = "扣分", set = "设置", reverse = "冲红", decay = "衰减" }
+    for _, entry in ipairs(DKP.db.log or {}) do
+        local playerDisplay
+        if entry.players then
+            local count = #entry.players
+            if type(entry.players[1]) == "table" then
+                playerDisplay = entry.players[1].name .. "等" .. count .. "人"
+            else
+                playerDisplay = entry.players[1] .. "等" .. count .. "人"
+            end
+        else
+            playerDisplay = entry.player or ""
+        end
+        local amt = entry.amount or 0
+        table.insert(lines, table.concat({
+            date("%m-%d %H:%M", entry.timestamp or 0),
+            typeNames[entry.type] or entry.type,
+            playerDisplay,
+            (amt >= 0 and "+" or "") .. amt,
+            entry.reason or "",
+            entry.officer or "",
+        }, "\t"))
+    end
+    return table.concat(lines, "\n")
+end
+
+----------------------------------------------------------------------
+-- 对话框：导出数据
 ----------------------------------------------------------------------
 local exportDialog
 
-function DKP.ShowExportDialog()
+function DKP.ShowExportDialog(preloadText)
     if not exportDialog then
-        local d = CreateDialogFrame("YTHTDKPExportDialog", 520, 420, "导出DKP数据")
+        local d = CreateDialogFrame("YTHTDKPExportDialog", 580, 460, "导出数据")
 
         local closeBtn = CreateFrame("Button", nil, d, "UIPanelCloseButton")
         closeBtn:SetPoint("TOPRIGHT", -2, -2)
 
-        -- 模式切换按钮
-        local modeDKP = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
-        modeDKP:SetSize(100, 22)
-        modeDKP:SetPoint("TOPLEFT", 16, -36)
-        modeDKP:SetText("DKP数据")
-        d.modeDKP = modeDKP
+        -- 模式切换按钮（两排）
+        local modeActivity = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        modeActivity:SetSize(90, 22)
+        modeActivity:SetPoint("TOPLEFT", 16, -36)
+        modeActivity:SetText("活动记录")
+        d.modeActivity = modeActivity
 
-        local modeLog = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
-        modeLog:SetSize(100, 22)
-        modeLog:SetPoint("LEFT", modeDKP, "RIGHT", 4, 0)
-        modeLog:SetText("操作记录")
-        d.modeLog = modeLog
+        local modeTSVDKP = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        modeTSVDKP:SetSize(90, 22)
+        modeTSVDKP:SetPoint("LEFT", modeActivity, "RIGHT", 4, 0)
+        modeTSVDKP:SetText("表格:DKP")
+        d.modeTSVDKP = modeTSVDKP
 
-        local modeRoster = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
-        modeRoster:SetSize(100, 22)
-        modeRoster:SetPoint("LEFT", modeLog, "RIGHT", 4, 0)
-        modeRoster:SetText("人员名单")
-        d.modeRoster = modeRoster
+        local modeTSVLoot = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        modeTSVLoot:SetSize(90, 22)
+        modeTSVLoot:SetPoint("LEFT", modeTSVDKP, "RIGHT", 4, 0)
+        modeTSVLoot:SetText("表格:装备")
+        d.modeTSVLoot = modeTSVLoot
+
+        local modeTSVLog = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        modeTSVLog:SetSize(90, 22)
+        modeTSVLog:SetPoint("LEFT", modeTSVLoot, "RIGHT", 4, 0)
+        modeTSVLog:SetText("表格:记录")
+        d.modeTSVLog = modeTSVLog
 
         -- 提示
         local hint = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         hint:SetPoint("TOPLEFT", 16, -64)
-        hint:SetWidth(488)
+        hint:SetWidth(540)
         hint:SetJustifyH("LEFT")
         hint:SetTextColor(0.6, 0.6, 0.6)
         d.hint = hint
@@ -1672,7 +2144,7 @@ function DKP.ShowExportDialog()
         editBox:SetMultiLine(true)
         editBox:SetAutoFocus(false)
         editBox:SetFontObject("ChatFontNormal")
-        editBox:SetWidth(460)
+        editBox:SetWidth(520)
         editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
         sf:SetScrollChild(editBox)
         d.editBox = editBox
@@ -1697,97 +2169,36 @@ function DKP.ShowExportDialog()
         closeFooterBtn:SetText("关闭")
         closeFooterBtn:SetScript("OnClick", function() d:Hide() end)
 
-        -- 导出函数
-        local function ExportDKPData()
-            local lines = {}
-            table.insert(lines, "# DKP数据导出 - " .. date("%Y-%m-%d %H:%M:%S"))
-            -- 导出管理员列表（用于备份恢复）
-            if DKP.db.admins and next(DKP.db.admins) then
-                local adminNames = {}
-                for name in pairs(DKP.db.admins) do table.insert(adminNames, name) end
-                table.insert(lines, "# ADMINS:" .. table.concat(adminNames, ","))
-            end
-            if DKP.db.masterAdmin then
-                table.insert(lines, "# MASTER:" .. DKP.db.masterAdmin)
-            end
-            table.insert(lines, "# 格式: 玩家名,DKP,角色1:职业1,角色2:职业2,...")
-            if DKP.db and DKP.db.players then
-                for name, data in pairs(DKP.db.players) do
-                    local charParts = {}
-                    for _, char in ipairs(data.characters or {}) do
-                        table.insert(charParts, char.name .. ":" .. (char.class or "WARRIOR"))
-                    end
-                    table.insert(lines, name .. "," .. tostring(data.dkp or 0) .. "," .. table.concat(charParts, ","))
-                end
-            end
-            return table.concat(lines, "\n")
-        end
-
-        local function ExportLog()
-            local lines = {}
-            table.insert(lines, "# 操作记录导出 - " .. date("%Y-%m-%d %H:%M:%S"))
-            table.insert(lines, "# 格式: 时间戳,类型,玩家(批量用;分隔),数额,原因,操作员")
-            for _, entry in ipairs(DKP.db.log or {}) do
-                local playerField
-                if entry.players then
-                    if type(entry.players[1]) == "table" then
-                        -- 衰减明细: name:amount;name:amount
-                        local parts = {}
-                        for _, d in ipairs(entry.players) do
-                            table.insert(parts, d.name .. ":" .. tostring(d.amount))
-                        end
-                        playerField = table.concat(parts, ";")
-                    else
-                        playerField = table.concat(entry.players, ";")
-                    end
-                else
-                    playerField = entry.player or ""
-                end
-                table.insert(lines, table.concat({
-                    tostring(entry.timestamp or 0),
-                    entry.type or "",
-                    playerField,
-                    tostring(entry.amount or 0),
-                    (entry.reason or ""):gsub(",", ";"),
-                    entry.officer or "",
-                    entry.reversed and "reversed" or "",
-                }, ","))
-            end
-            return table.concat(lines, "\n")
-        end
-
-        local function ExportRoster()
-            local lines = {}
-            table.insert(lines, "# 人员名单导出 - " .. date("%Y-%m-%d %H:%M:%S"))
-            table.insert(lines, "# 格式: 玩家名,角色1:职业1,角色2:职业2,...")
-            if DKP.db and DKP.db.players then
-                for name, data in pairs(DKP.db.players) do
-                    local charParts = {}
-                    for _, char in ipairs(data.characters or {}) do
-                        table.insert(charParts, char.name .. ":" .. (char.class or "WARRIOR"))
-                    end
-                    table.insert(lines, name .. "," .. table.concat(charParts, ","))
-                end
-            end
-            return table.concat(lines, "\n")
-        end
-
         -- 按钮回调
-        modeDKP:SetScript("OnClick", function()
-            d.hint:SetText("DKP数据格式: 玩家名,DKP,角色1:职业1,角色2:职业2,...")
-            d.editBox:SetText(ExportDKPData())
+        modeActivity:SetScript("OnClick", function()
+            d.hint:SetText("活动记录: 包含DKP/日志/拍卖/拍卖表完整数据，可通过导入恢复")
+            local act = {
+                name = date("%m-%d %H:%M") .. " 当前",
+                startTime = DKP.db.session and DKP.db.session.startTime or time(),
+                endTime = time(),
+                log = DKP.db.log,
+                auctionHistory = DKP.db.auctionHistory,
+                sheets = DKP.db.sheets,
+            }
+            d.editBox:SetText(DKP.SerializeActivity(act))
             d.editBox:HighlightText()
             d.editBox:SetFocus()
         end)
-        modeLog:SetScript("OnClick", function()
-            d.hint:SetText("操作记录格式: 时间戳,类型,玩家,数额,原因,操作员")
-            d.editBox:SetText(ExportLog())
+        modeTSVDKP:SetScript("OnClick", function()
+            d.hint:SetText("Tab分隔: 粘贴到金山表格/Excel自动分列 (DKP数据)")
+            d.editBox:SetText(ExportTSV_DKP())
             d.editBox:HighlightText()
             d.editBox:SetFocus()
         end)
-        modeRoster:SetScript("OnClick", function()
-            d.hint:SetText("人员名单格式: 玩家名,角色1:职业1,角色2:职业2,...")
-            d.editBox:SetText(ExportRoster())
+        modeTSVLoot:SetScript("OnClick", function()
+            d.hint:SetText("Tab分隔: 粘贴到金山表格/Excel自动分列 (装备分配+Wowhead链接)")
+            d.editBox:SetText(ExportTSV_Loot())
+            d.editBox:HighlightText()
+            d.editBox:SetFocus()
+        end)
+        modeTSVLog:SetScript("OnClick", function()
+            d.hint:SetText("Tab分隔: 粘贴到金山表格/Excel自动分列 (操作记录)")
+            d.editBox:SetText(ExportTSV_Log())
             d.editBox:HighlightText()
             d.editBox:SetFocus()
         end)
@@ -1795,12 +2206,19 @@ function DKP.ShowExportDialog()
         exportDialog = d
     end
 
-    -- 默认显示DKP数据
-    exportDialog.hint:SetText("点击上方按钮切换导出模式，然后全选复制")
-    exportDialog.editBox:SetText("")
+    exportDialog.hint:SetText("选择导出模式，然后全选复制")
+    if preloadText then
+        exportDialog.editBox:SetText(preloadText)
+    else
+        exportDialog.editBox:SetText("")
+    end
     exportDialog:Show()
-    -- 自动加载DKP数据
-    exportDialog.modeDKP:GetScript("OnClick")(exportDialog.modeDKP)
+    if not preloadText then
+        exportDialog.modeActivity:GetScript("OnClick")(exportDialog.modeActivity)
+    else
+        exportDialog.editBox:HighlightText()
+        exportDialog.editBox:SetFocus()
+    end
 end
 
 ----------------------------------------------------------------------

@@ -50,6 +50,8 @@ local function CreateMainFrame()
     f:SetSize(FRAME_WIDTH, 500)
     f:SetPoint("CENTER")
     f:SetMovable(true)
+    f:SetResizable(true)
+    f:SetResizeBounds(FRAME_WIDTH, 500, 1200, 800)
     f:EnableMouse(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("HIGH")
@@ -57,6 +59,25 @@ local function CreateMainFrame()
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", f.StartMoving)
     f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+    -- 右下角拖拽缩放手柄
+    local resizeBtn = CreateFrame("Button", nil, f)
+    resizeBtn:SetSize(16, 16)
+    resizeBtn:SetPoint("BOTTOMRIGHT", -4, 4)
+    resizeBtn:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    resizeBtn:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    resizeBtn:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    resizeBtn:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
+    resizeBtn:SetScript("OnMouseUp", function()
+        f:StopMovingOrSizing()
+        -- 刷新内容适配新尺寸
+        if f.scrollChild then
+            f.scrollChild:SetWidth(f:GetWidth() - PADDING * 2 - 24)
+        end
+        if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+        if f.activeTab == "dkp" and DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+        if f.activeTab == "auctionlog" and DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+    end)
 
     -- 背景
     f:SetBackdrop({
@@ -180,18 +201,15 @@ local function CreateMainFrame()
     clearSheetBtn:SetScript("OnClick", function()
         if not DKP.IsOfficer or not DKP.IsOfficer() then return end
         StaticPopupDialogs["YTHT_DKP_CLEAR_SHEET"] = {
-            text = "确定要清空当前拍卖表吗？\n(所有Boss和装备记录将被删除)",
+            text = "确定要清空所有拍卖表吗？\n(所有副本的Boss和装备记录将被删除)",
             button1 = "确定",
             button2 = "取消",
             OnAccept = function()
-                local sheetName = DKP.db.currentSheet
-                if sheetName and DKP.db.sheets[sheetName] then
-                    DKP.db.sheets[sheetName] = nil
-                    DKP.db.currentSheet = nil
-                    DKP.hasUnsavedChanges = true
-                    DKP.Print("已清空拍卖表: " .. sheetName)
-                    DKP.RefreshTableUI()
-                end
+                wipe(DKP.db.sheets)
+                DKP.db.currentSheet = nil
+                DKP.hasUnsavedChanges = true
+                DKP.Print("已清空所有拍卖表")
+                DKP.RefreshTableUI()
             end,
             timeout = 0, whileDead = true, hideOnEscape = true,
         }
@@ -1130,54 +1148,11 @@ function DKP.ShowActivityHistory()
             DKP.SwitchTab("loot")
         end)
 
-        -- 导出：将归档活动数据导出为文本
+        -- 导出：使用 SerializeActivity 统一格式
         row.exportBtn:SetScript("OnClick", function()
-            local lines = {}
-            table.insert(lines, "# 活动归档导出: " .. (act.name or ""))
-            table.insert(lines, "# 时间: " .. date("%Y-%m-%d %H:%M", act.startTime or 0) .. " ~ " .. date("%Y-%m-%d %H:%M", act.endTime or 0))
-            table.insert(lines, "")
-            -- 导出操作记录
-            table.insert(lines, "## 操作记录 (" .. #(act.log or {}) .. " 条)")
-            for _, entry in ipairs(act.log or {}) do
-                local playerField = entry.player or ""
-                if entry.players then
-                    if type(entry.players[1]) == "table" then
-                        local parts = {}
-                        for _, dd in ipairs(entry.players) do table.insert(parts, dd.name .. ":" .. tostring(dd.amount)) end
-                        playerField = table.concat(parts, ";")
-                    else
-                        playerField = table.concat(entry.players, ";")
-                    end
-                end
-                table.insert(lines, table.concat({
-                    tostring(entry.timestamp or 0), entry.type or "", playerField,
-                    tostring(entry.amount or 0), (entry.reason or ""):gsub(",", ";"), entry.officer or "",
-                }, ","))
-            end
-            table.insert(lines, "")
-            -- 导出拍卖记录
-            table.insert(lines, "## 拍卖记录 (" .. #(act.auctionHistory or {}) .. " 条)")
-            for _, entry in ipairs(act.auctionHistory or {}) do
-                table.insert(lines, table.concat({
-                    date("%H:%M", entry.timestamp or 0),
-                    entry.state or "ENDED",
-                    entry.itemLink or "",
-                    entry.winner or "-",
-                    tostring(entry.finalBid or 0),
-                    entry.encounterName or "",
-                }, ", "))
-            end
-            -- 显示导出对话框
-            if DKP.ShowExportDialog then
-                DKP.ShowExportDialog()
-                C_Timer.After(0.1, function()
-                    local eb = _G["YTHTDKPExportEditBox"]
-                    if eb then
-                        eb:SetText(table.concat(lines, "\n"))
-                        eb:HighlightText()
-                        eb:SetFocus()
-                    end
-                end)
+            if DKP.SerializeActivity and DKP.ShowExportDialog then
+                local text = DKP.SerializeActivity(act)
+                DKP.ShowExportDialog(text)
             end
         end)
 
