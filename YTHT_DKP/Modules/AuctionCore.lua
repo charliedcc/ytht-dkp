@@ -149,9 +149,11 @@ function DKP.StartAuction(itemLink, startBid, duration, encounterInfo)
 
     DKP.Print("拍卖发起: " .. itemLink .. " 起拍 " .. startBid .. " DKP")
 
-    -- 更新UI
-    if DKP.RefreshAuctionUI then DKP.RefreshAuctionUI() end
-    if DKP.ShowAuctionUI then DKP.ShowAuctionUI() end
+    -- 更新UI（延迟一帧确保 AuctionStart 对话框已关闭）
+    C_Timer.After(0, function()
+        if DKP.RefreshAuctionUI then DKP.RefreshAuctionUI() end
+        if DKP.ShowAuctionUI then DKP.ShowAuctionUI() end
+    end)
 
     return true
 end

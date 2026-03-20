@@ -518,6 +518,7 @@ function DKP.ShowAuctionUI()
         auctionFrame = CreateAuctionFrame()
     end
     auctionFrame:Show()
+    auctionFrame:Raise()  -- 确保在最前面
     DKP.RefreshAuctionUI()
 end
 
