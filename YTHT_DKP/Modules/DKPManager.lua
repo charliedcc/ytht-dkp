@@ -945,7 +945,7 @@ local IMPORT_MODES = {
         key = "activity",
         label = "活动记录",
         hint = "粘贴从「导出 → 活动记录」复制的完整数据\n"
-            .. "包含DKP/操作日志/拍卖记录/拍卖表，导入后存为归档活动\n"
+            .. "包含DKP/操作日志/拍卖记录/掉落列表，导入后存为归档活动\n"
             .. "格式以 [YTHT_DKP_ACTIVITY_V1] 开头",
     },
     {
@@ -2181,7 +2181,7 @@ function DKP.ShowExportDialog(preloadText)
 
         -- 按钮回调
         modeActivity:SetScript("OnClick", function()
-            d.hint:SetText("活动记录: 包含DKP/日志/拍卖/拍卖表完整数据，可通过导入恢复")
+            d.hint:SetText("活动记录: 包含DKP/日志/拍卖/掉落列表完整数据，可通过导入恢复")
             local act = {
                 name = date("%m-%d %H:%M") .. " 当前",
                 startTime = DKP.db.session and DKP.db.session.startTime or time(),

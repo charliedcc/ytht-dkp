@@ -580,7 +580,7 @@ function DKP.BroadcastFullSync()
             local sheetsData = DKP.SerializeSheets()
             if sheetsData ~= "" then
                 SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, ch)
-                DKP.Print("已广播: 拍卖表")
+                DKP.Print("已广播: 掉落列表")
             end
         end
     end)
@@ -768,36 +768,64 @@ local function HandleSheetsChunk(parts, sender)
 
         local senderShort = sender:match("^([^%-]+)") or sender
 
-        -- 管理员需确认，非管理员直接接受
-        if DKP.IsOfficer() then
-            -- 存储待确认数据
+        -- 只有主管理员需要确认，其他人直接接受
+        if DKP.db.masterAdmin and DKP.db.masterAdmin == DKP.playerName then
+            -- 主管理员：自定义确认对话框
             DKP.pendingSheetsData = newSheets
             DKP.pendingSheetsSender = senderShort
-            StaticPopupDialogs["YTHT_DKP_CONFIRM_SHEETS_SYNC"] = {
-                text = "收到来自 " .. senderShort .. " 的拍卖表同步，是否接受覆盖本地拍卖表？",
-                button1 = "接受",
-                button2 = "拒绝",
-                OnAccept = function()
-                    if DKP.pendingSheetsData then
-                        DKP.db.sheets = DKP.pendingSheetsData
-                        DKP.Print("已接受拍卖表同步 (来自 " .. (DKP.pendingSheetsSender or "?") .. ")")
-                        if DKP.RefreshTableUI then DKP.RefreshTableUI() end
-                        DKP.pendingSheetsData = nil
-                        DKP.pendingSheetsSender = nil
-                    end
-                end,
-                OnCancel = function()
-                    DKP.Print("已拒绝拍卖表同步")
+            if not DKP._sheetsSyncDialog then
+                local d = CreateFrame("Frame", "YTHTDKPSheetsSyncDialog", UIParent, "BackdropTemplate")
+                d:SetSize(320, 120)
+                d:SetPoint("CENTER")
+                d:SetFrameStrata("FULLSCREEN_DIALOG")
+                d:SetFrameLevel(250)
+                d:EnableMouse(true)
+                d:SetBackdrop({
+                    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+                    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+                    edgeSize = 16,
+                    insets = { left = 4, right = 4, top = 4, bottom = 4 },
+                })
+                d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+                d:Hide()
+                local text = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                text:SetPoint("TOP", 0, -16)
+                text:SetWidth(280)
+                d.text = text
+                local acceptBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                acceptBtn:SetSize(80, 24)
+                acceptBtn:SetPoint("BOTTOMLEFT", 20, 12)
+                acceptBtn:SetText("接受")
+                d.acceptBtn = acceptBtn
+                local rejectBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                rejectBtn:SetSize(80, 24)
+                rejectBtn:SetPoint("BOTTOMRIGHT", -20, 12)
+                rejectBtn:SetText("拒绝")
+                rejectBtn:SetScript("OnClick", function()
+                    DKP.Print("已拒绝掉落列表同步")
                     DKP.pendingSheetsData = nil
                     DKP.pendingSheetsSender = nil
-                end,
-                timeout = 0, whileDead = true, hideOnEscape = true,
-            }
-            local popup = StaticPopup_Show("YTHT_DKP_CONFIRM_SHEETS_SYNC")
-            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+                    d:Hide()
+                end)
+                DKP._sheetsSyncDialog = d
+            end
+            local d = DKP._sheetsSyncDialog
+            d.text:SetText("收到来自 " .. senderShort .. " 的掉落列表同步\n是否接受覆盖？")
+            d.acceptBtn:SetScript("OnClick", function()
+                if DKP.pendingSheetsData then
+                    DKP.db.sheets = DKP.pendingSheetsData
+                    DKP.Print("已接受掉落列表同步 (来自 " .. (DKP.pendingSheetsSender or "?") .. ")")
+                    if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+                    DKP.pendingSheetsData = nil
+                    DKP.pendingSheetsSender = nil
+                end
+                d:Hide()
+            end)
+            d:Show()
         else
+            -- 非主管理员/普通团员：直接接受
             DKP.db.sheets = newSheets
-            DKP.Print("已同步拍卖表 (来自 " .. senderShort .. ")")
+            DKP.Print("已同步掉落列表 (来自 " .. senderShort .. ")")
             if DKP.RefreshTableUI then DKP.RefreshTableUI() end
         end
     end

@@ -157,9 +157,9 @@ local function CreateMainFrame()
         return tab
     end
 
-    local tabLoot = CreateTabButton(f, "拍卖表", PADDING, "loot")
-    local tabDKP = CreateTabButton(f, "DKP管理", PADDING + 76, "dkp")
-    local tabAuctionLog = CreateTabButton(f, "拍卖记录", PADDING + 76 * 2, "auctionlog")
+    local tabLoot = CreateTabButton(f, "掉落列表", PADDING, "loot")
+    local tabDKP = CreateTabButton(f, "DKP管理", PADDING + 80, "dkp")
+    local tabAuctionLog = CreateTabButton(f, "拍卖记录", PADDING + 80 * 2, "auctionlog")
     f.tabs = { loot = tabLoot, dkp = tabDKP, auctionlog = tabAuctionLog }
     f.activeTab = "loot"
 
@@ -197,18 +197,18 @@ local function CreateMainFrame()
     local clearSheetBtn = CreateFrame("Button", nil, lootContent, "UIPanelButtonTemplate")
     clearSheetBtn:SetSize(72, 18)
     clearSheetBtn:SetPoint("RIGHT", headerBg, "RIGHT", 0, 0)
-    clearSheetBtn:SetText("清空拍卖表")
+    clearSheetBtn:SetText("清空列表")
     clearSheetBtn:SetScript("OnClick", function()
         if not DKP.IsOfficer or not DKP.IsOfficer() then return end
         StaticPopupDialogs["YTHT_DKP_CLEAR_SHEET"] = {
-            text = "确定要清空所有拍卖表吗？\n(所有副本的Boss和装备记录将被删除)",
+            text = "确定要清空所有掉落列表吗？\n(所有副本的Boss和装备记录将被删除)",
             button1 = "确定",
             button2 = "取消",
             OnAccept = function()
                 wipe(DKP.db.sheets)
                 DKP.db.currentSheet = nil
                 DKP.hasUnsavedChanges = true
-                DKP.Print("已清空所有拍卖表")
+                DKP.Print("已清空所有掉落列表")
                 DKP.RefreshTableUI()
             end,
             timeout = 0, whileDead = true, hideOnEscape = true,
@@ -953,7 +953,7 @@ function DKP.ShowArchiveDialog()
 
         local hint = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         hint:SetPoint("TOPLEFT", 16, -35)
-        hint:SetText("归档后当前记录和拍卖表将被清空，DKP保留")
+        hint:SetText("归档后当前记录和掉落列表将被清空，DKP保留")
         hint:SetTextColor(0.7, 0.7, 0.7)
         d.hint = hint
 
@@ -1200,7 +1200,7 @@ function DKP.ShowActivityHistory()
         -- 恢复：将归档数据恢复为当前工作数据
         row.restoreBtn:SetScript("OnClick", function()
             StaticPopupDialogs["YTHT_DKP_RESTORE_ACTIVITY"] = {
-                text = "恢复此活动将覆盖当前的记录和拍卖表，确定吗？",
+                text = "恢复此活动将覆盖当前的记录和掉落列表，确定吗？",
                 button1 = "确定",
                 button2 = "取消",
                 OnAccept = function()
@@ -1240,8 +1240,10 @@ end
 ----------------------------------------------------------------------
 function DKP.OnInitialized()
     -- 初始化管理员列表
+    -- 只有在本地已有玩家数据时才自动设为管理员（说明是首次创建数据的人）
+    -- 新装插件的用户不自动成为管理员，等待从管理员同步权限
     if not DKP.db.admins then DKP.db.admins = {} end
-    if not next(DKP.db.admins) then
+    if not next(DKP.db.admins) and DKP.db.players and next(DKP.db.players) then
         DKP.db.admins[DKP.playerName] = true
     end
     -- 首位管理员自动成为主管理员（不可被远程移除）
@@ -1545,7 +1547,7 @@ function DKP.OnInitialized()
                         end
                     end
                 end
-                DKP.Print("已添加 " .. added .. " 件背包装备到拍卖表")
+                DKP.Print("已添加 " .. added .. " 件背包装备到掉落列表")
                 DKP.MainFrame:Show()
                 DKP.SwitchTab("loot")
                 DKP.RefreshTableUI()
@@ -1583,7 +1585,7 @@ function DKP.OnInitialized()
 
             else
                 DKP.Print("调试命令:")
-                DKP.Print("  /ytht debug additem    - 背包装备添加到拍卖表")
+                DKP.Print("  /ytht debug additem    - 背包装备添加到掉落列表")
                 DKP.Print("  /ytht debug auction [链接] - 直接发起测试拍卖")
                 DKP.Print("  /ytht debug fakeraid   - 添加自己到DKP名单")
                 DKP.Print("  /ytht debug reset      - 重置拍卖/session状态")
