@@ -253,6 +253,11 @@ end
 -- DKP 变动接收（团员端）
 ----------------------------------------------------------------------
 local function HandleDKPChange(parts, sender)
+    -- 只接受管理员广播的DKP变动
+    local senderShort = sender:match("^([^%-]+)") or sender
+    if DKP.db.admins and next(DKP.db.admins) and not DKP.db.admins[senderShort] then
+        return
+    end
     -- parts: { "DKP_CHANGE", playerName, newDKP, changeAmount, reason, timestamp, officer }
     local playerName = parts[2]
     local newDKP = tonumber(parts[3])
@@ -514,59 +519,95 @@ local function HandleHistoryChunk(parts, sender)
 end
 
 ----------------------------------------------------------------------
+-- 拍卖表变化广播（关键操作时调用）
+----------------------------------------------------------------------
+local sheetsBroadcastPending = false
+
+function DKP.BroadcastSheets()
+    if not DKP.IsOfficer() then return end
+    -- 防抖：0.5秒内多次调用只发一次
+    if sheetsBroadcastPending then return end
+    sheetsBroadcastPending = true
+    C_Timer.After(0.5, function()
+        sheetsBroadcastPending = false
+        local channel = GetChannel()
+        if not channel then return end
+        if DKP.SerializeSheets then
+            local data = DKP.SerializeSheets()
+            if data ~= "" then
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", data, channel)
+            end
+        end
+    end)
+end
+
+----------------------------------------------------------------------
 -- 全量广播（含 players + options + admins）
 ----------------------------------------------------------------------
 function DKP.BroadcastFullSync()
     if not DKP.IsOfficer() then return end
 
-    -- 广播 admin 列表
-    DKP.BroadcastAdminSync()
+    local channel = GetChannel()
+    if not channel then
+        DKP.Print("不在队伍中，无法广播")
+        return
+    end
 
-    -- 广播 players 数据
+    -- 分批发送，用延迟避免 WoW 消息节流
+    -- 第1批: admin 列表 + players
+    DKP.BroadcastAdminSync()
     local playersData = SerializePlayers()
     if playersData ~= "" then
-        local channel = GetChannel()
-        if channel then
-            SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", playersData, channel)
-        end
+        SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", playersData, channel)
     end
 
-    -- 广播 options
-    local optsData = SerializeOptions()
-    if optsData ~= "" then
-        local channel = GetChannel()
-        if channel then
-            SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, channel)
+    -- 第2批: options（延迟1秒）
+    C_Timer.After(1, function()
+        local ch = GetChannel()
+        if not ch then return end
+        local optsData = SerializeOptions()
+        if optsData ~= "" then
+            SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, ch)
         end
-    end
+        DKP.Print("已广播: 配置")
+    end)
 
-    -- 广播 sheets (拍卖表)
-    local sheetsData = DKP.SerializeSheets()
-    if sheetsData ~= "" then
-        local channel = GetChannel()
-        if channel then
-            SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, channel)
-        end
-    end
-
-    -- 广播完整活动数据（log + auctionHistory）
-    if DKP.SerializeActivity then
-        local act = {
-            name = "sync",
-            startTime = DKP.db.session and DKP.db.session.startTime or 0,
-            endTime = time(),
-            log = DKP.db.log or {},
-            auctionHistory = DKP.db.auctionHistory or {},
-            sheets = {},  -- sheets 已单独广播
-        }
-        local actData = DKP.SerializeActivity(act)
-        if actData ~= "" then
-            local channel = GetChannel()
-            if channel then
-                SendChunked(DKP.ADDON_PREFIX, "SYNC_ACTIVITY", actData, channel)
+    -- 第3批: sheets（延迟2秒）
+    C_Timer.After(2, function()
+        local ch = GetChannel()
+        if not ch then return end
+        if DKP.SerializeSheets then
+            local sheetsData = DKP.SerializeSheets()
+            if sheetsData ~= "" then
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, ch)
+                DKP.Print("已广播: 拍卖表")
             end
         end
-    end
+    end)
+
+    -- 第4批: log + auctionHistory（延迟3秒，不含 players 避免冗余）
+    C_Timer.After(3, function()
+        local ch = GetChannel()
+        if not ch then return end
+        if DKP.SerializeActivity then
+            local act = {
+                name = "sync",
+                startTime = DKP.db.session and DKP.db.session.startTime or 0,
+                endTime = time(),
+                log = DKP.db.log or {},
+                auctionHistory = DKP.db.auctionHistory or {},
+                sheets = {},
+                players = {},  -- 不重复发 players
+            }
+            local actData = DKP.SerializeActivity(act)
+            if actData ~= "" then
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_ACTIVITY", actData, ch)
+                DKP.Print("已广播: 操作记录和拍卖记录")
+            end
+        end
+    end)
+
+    DKP.Print("开始广播数据到团队 (分4批发送)...")
 end
 
 ----------------------------------------------------------------------

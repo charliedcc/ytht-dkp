@@ -510,6 +510,7 @@ local function SetItemRowData(row, itemData)
                         DKP.hasUnsavedChanges = true
                         DKP.RefreshTableUI()
                         if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                        if DKP.BroadcastSheets then DKP.BroadcastSheets() end
                         DKP.Print("已撤销: " .. link .. " (退还 " .. winner .. " " .. dkpCost .. " DKP)")
                     end,
                     timeout = 0, whileDead = true, hideOnEscape = true,

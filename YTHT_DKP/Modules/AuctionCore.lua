@@ -419,6 +419,7 @@ function DKP.EndAuction(auctionID)
         if DKP.RefreshAuctionUI then DKP.RefreshAuctionUI() end
         if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
         if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+        if DKP.BroadcastSheets then DKP.BroadcastSheets() end
         return
     end
 
@@ -539,6 +540,7 @@ function DKP.EndAuction(auctionID)
     if DKP.RefreshAuctionUI then DKP.RefreshAuctionUI() end
     if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
     if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+    if DKP.BroadcastSheets then DKP.BroadcastSheets() end
 end
 
 ----------------------------------------------------------------------
@@ -599,6 +601,7 @@ function DKP.CancelAuction(auctionID)
 
     if DKP.RefreshAuctionUI then DKP.RefreshAuctionUI() end
     if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+    if DKP.BroadcastSheets then DKP.BroadcastSheets() end
 end
 
 ----------------------------------------------------------------------

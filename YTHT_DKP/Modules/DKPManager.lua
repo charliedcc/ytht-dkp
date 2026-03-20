@@ -3228,9 +3228,11 @@ function DKP.InitDKPPanel()
         end
         if DKP.BroadcastFullSync then
             DKP.BroadcastFullSync()
-            DKP.Print("已广播全部数据到团队")
         end
     end)
+
+    -- 管理员专用按钮列表（RefreshDKPUI 时根据权限显示/隐藏）
+    parent.adminButtons = { bulkBtn, raidBtn, addBtn, importBtn, settingsBtn, broadcastBtn }
 
     -- 表头
     local headerY = -TOOLBAR_HEIGHT - 2
@@ -3303,10 +3305,11 @@ function DKP.RefreshDKPUI()
 
     -- 权限控制：非管理员隐藏管理按钮
     local isOfficer = DKP.IsOfficer and DKP.IsOfficer() or false
-    if parent.addBtn then parent.addBtn:SetShown(isOfficer) end
-    if parent.importBtn then parent.importBtn:SetShown(isOfficer) end
-    if parent.bulkBtn then parent.bulkBtn:SetShown(isOfficer) end
-    if parent.raidBtn then parent.raidBtn:SetShown(isOfficer) end
+    if parent.adminButtons then
+        for _, btn in ipairs(parent.adminButtons) do
+            btn:SetShown(isOfficer)
+        end
+    end
 
     -- 更新玩家总数
     if parent.countText then

@@ -386,10 +386,11 @@ function DKP.ShowManualAssignDialog(itemLink, itemData, bossData)
         DKP.Print("已将 " .. (itemLink or "物品") .. " 分配给 " .. selectedPlayer ..
             (dkpCost > 0 and (" (扣除 " .. dkpCost .. " DKP)") or ""))
 
-        -- 刷新UI
+        -- 刷新UI + 广播拍卖表变化
         if DKP.RefreshTableUI then DKP.RefreshTableUI() end
         if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
         if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+        if DKP.BroadcastSheets then DKP.BroadcastSheets() end
 
         d:Hide()
     end)
