@@ -23,6 +23,7 @@ local STATE_COLORS = {
     MANUAL = { r = 0.4, g = 0.6, b = 1.0 },
     TIE = { r = 1.0, g = 0.3, b = 0.3 },
     ACTIVE = { r = 1.0, g = 1.0, b = 0.0 },
+    REVOKED = { r = 1.0, g = 0.5, b = 0.0 },
 }
 local STATE_LABELS = {
     ENDED = "已结束",
@@ -30,6 +31,7 @@ local STATE_LABELS = {
     MANUAL = "手动",
     TIE = "平局",
     ACTIVE = "进行中",
+    REVOKED = "已撤销",
 }
 
 -- 缓存

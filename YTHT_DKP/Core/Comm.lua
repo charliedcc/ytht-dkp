@@ -138,7 +138,11 @@ end
 ----------------------------------------------------------------------
 -- 分包发送
 ----------------------------------------------------------------------
-local CHUNK_SEND_INTERVAL = 0.4  -- 每个 chunk 间隔 400ms，避免 WoW 节流
+-- WoW addon message 限制: 每前缀突发10条，之后每秒恢复1条
+-- 前10条用 0.1s 间隔快速发，之后每条间隔 1.1s
+local CHUNK_BURST_LIMIT = 8      -- 保守用8（留2条余量给其他消息）
+local CHUNK_BURST_INTERVAL = 0.1  -- 突发期间隔
+local CHUNK_SLOW_INTERVAL = 1.1   -- 突发后间隔（等恢复）
 
 local function SendChunked(prefix, msgType, data, channel, target)
     -- 动态计算 chunk 大小，确保总消息 <= 255 字节
@@ -154,7 +158,16 @@ local function SendChunked(prefix, msgType, data, channel, target)
     local showProgress = numChunks > 5
 
     for i = 1, numChunks do
-        C_Timer.After((i - 1) * CHUNK_SEND_INTERVAL, function()
+        -- 计算延迟: 前 BURST_LIMIT 条快速发，之后慢速
+        local delay
+        if i <= CHUNK_BURST_LIMIT then
+            delay = (i - 1) * CHUNK_BURST_INTERVAL
+        else
+            delay = (CHUNK_BURST_LIMIT - 1) * CHUNK_BURST_INTERVAL
+                  + (i - CHUNK_BURST_LIMIT) * CHUNK_SLOW_INTERVAL
+        end
+
+        C_Timer.After(delay, function()
             local startPos = (i - 1) * chunkSize + 1
             local endPos = math.min(i * chunkSize, totalLen)
             local chunk = data:sub(startPos, endPos)
@@ -717,8 +730,8 @@ function DKP.BroadcastFullSync()
     -- 第4批: 掉落列表（延迟5秒）
     C_Timer.After(5, function() DKP.BroadcastSheetsData() end)
 
-    -- 第5批: 操作记录+拍卖记录（延迟20秒，等前面 chunks 全部发完）
-    C_Timer.After(20, function() DKP.BroadcastActivityData() end)
+    -- 第5批: 操作记录+拍卖记录（延迟30秒，等前面 chunks 全部发完）
+    C_Timer.After(30, function() DKP.BroadcastActivityData() end)
 end
 
 ----------------------------------------------------------------------

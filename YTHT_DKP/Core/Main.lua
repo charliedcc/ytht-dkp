@@ -150,8 +150,9 @@ local function CreateMainFrame()
         dd.buttons = {}
 
         local yOff = -4
-        local maxW = 120
-        for teamID, team in pairs(DKP.db.teams) do
+        local maxW = 160
+
+        local function AddDropdownItem(label, color, onClick)
             local btn = CreateFrame("Button", nil, dd)
             btn:SetHeight(20)
             btn:SetPoint("TOPLEFT", 4, yOff)
@@ -161,24 +162,103 @@ local function CreateMainFrame()
             hl:SetColorTexture(1, 1, 1, 0.1)
             local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             text:SetPoint("LEFT", 6, 0)
-            local displayName = team.name or teamID
-            if teamID == DKP.db.currentTeam then
-                text:SetText("|cff00FF00► " .. displayName .. "|r")
-            else
-                text:SetText("  " .. displayName)
-                text:SetTextColor(0.8, 0.8, 0.8)
-            end
+            text:SetText(label)
+            if color then text:SetTextColor(color[1], color[2], color[3]) end
             local w = text:GetStringWidth() + 20
             if w > maxW then maxW = w end
-            btn:SetScript("OnClick", function()
-                dd:Hide()
-                DKP.SwitchTeam(teamID)
-                teamBtnText:SetText(team.name or teamID)
-                DKP.Print("已切换到团队: " .. (team.name or teamID))
-            end)
+            btn:SetScript("OnClick", function() dd:Hide(); if onClick then onClick() end end)
             table.insert(dd.buttons, btn)
             yOff = yOff - 20
         end
+
+        local function AddSeparator()
+            local sep = CreateFrame("Frame", nil, dd)
+            sep:SetHeight(8)
+            sep:SetPoint("TOPLEFT", 4, yOff)
+            sep:SetPoint("RIGHT", dd, "RIGHT", -4, 0)
+            local line = sep:CreateTexture(nil, "ARTWORK")
+            line:SetPoint("LEFT", 4, 0)
+            line:SetPoint("RIGHT", -4, 0)
+            line:SetHeight(1)
+            line:SetColorTexture(0.3, 0.3, 0.4, 0.5)
+            table.insert(dd.buttons, sep)
+            yOff = yOff - 8
+        end
+
+        -- 团队列表
+        for teamID, team in pairs(DKP.db.teams) do
+            local displayName = team.name or teamID
+            if teamID == DKP.db.currentTeam then
+                AddDropdownItem("|cff00FF00► " .. displayName .. "|r", nil, nil)
+            else
+                AddDropdownItem("  " .. displayName, {0.8, 0.8, 0.8}, function()
+                    DKP.SwitchTeam(teamID)
+                    teamBtnText:SetText(team.name or teamID)
+                    DKP.Print("已切换到团队: " .. (team.name or teamID))
+                end)
+            end
+        end
+
+        AddSeparator()
+
+        -- 创建团队
+        AddDropdownItem("|cff00CCFF+ 创建团队|r", nil, function()
+            DKP.ShowCreateTeamDialog()
+        end)
+
+        -- 编辑当前团队
+        AddDropdownItem("|cffFFCC00✎ 编辑团队名称|r", nil, function()
+            DKP.ShowRenameTeamDialog()
+        end)
+
+        -- 删除当前团队（非local）
+        if DKP.db.currentTeam ~= "local" then
+            AddDropdownItem("|cffFF4444✕ 删除当前团队|r", nil, function()
+                local teamID = DKP.db.currentTeam
+                local teamName = DKP.GetCurrentTeamName()
+                -- 自定义确认
+                if not DKP._deleteTeamDialog then
+                    local dlg = CreateFrame("Frame", "YTHTDKPDeleteTeamDialog", UIParent, "BackdropTemplate")
+                    dlg:SetSize(300, 100)
+                    dlg:SetPoint("CENTER")
+                    dlg:SetFrameStrata("FULLSCREEN_DIALOG")
+                    dlg:SetFrameLevel(270)
+                    dlg:EnableMouse(true)
+                    dlg:SetBackdrop({
+                        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+                        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+                        edgeSize = 16, insets = { left = 4, right = 4, top = 4, bottom = 4 },
+                    })
+                    dlg:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+                    dlg:Hide()
+                    local t = dlg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                    t:SetPoint("TOP", 0, -14)
+                    t:SetWidth(260)
+                    dlg.text = t
+                    local yBtn = CreateFrame("Button", nil, dlg, "UIPanelButtonTemplate")
+                    yBtn:SetSize(80, 24)
+                    yBtn:SetPoint("BOTTOMLEFT", 20, 10)
+                    yBtn:SetText("确定删除")
+                    dlg.yesBtn = yBtn
+                    local nBtn = CreateFrame("Button", nil, dlg, "UIPanelButtonTemplate")
+                    nBtn:SetSize(80, 24)
+                    nBtn:SetPoint("BOTTOMRIGHT", -20, 10)
+                    nBtn:SetText("取消")
+                    nBtn:SetScript("OnClick", function() dlg:Hide() end)
+                    DKP._deleteTeamDialog = dlg
+                end
+                local dlg = DKP._deleteTeamDialog
+                dlg.text:SetText("确定删除团队「" .. teamName .. "」吗？\n所有数据将丢失！")
+                dlg.yesBtn:SetScript("OnClick", function()
+                    dlg:Hide()
+                    DKP.DeleteTeam(teamID)
+                    teamBtnText:SetText(DKP.GetCurrentTeamName())
+                    DKP.Print("已删除团队: " .. teamName)
+                end)
+                dlg:Show()
+            end)
+        end
+
         dd:SetSize(maxW + 8, math.abs(yOff) + 8)
         dd:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -2)
         dd:Show()
@@ -590,6 +670,27 @@ local function SetItemRowData(row, itemData)
                         if dkpCost > 0 and DKP.db.players[winner] then
                             DKP.AdjustDKP(winner, dkpCost, "撤销分配: " .. link)
                         end
+                        -- 记录撤销到拍卖历史
+                        local historyEntry = {
+                            id = "revoke_" .. time() .. "_" .. math.random(1000),
+                            itemLink = link,
+                            state = "REVOKED",
+                            winner = winner,
+                            winnerChar = winner,
+                            winnerClass = itemData.winnerClass or "",
+                            finalBid = dkpCost,
+                            startBid = 0,
+                            bidCount = 0,
+                            bids = {},
+                            timestamp = time(),
+                            officer = DKP.playerName,
+                            encounterName = row.bossData and row.bossData.name or nil,
+                            instanceName = DKP.db.currentSheet or nil,
+                        }
+                        table.insert(DKP.db.auctionHistory, historyEntry)
+                        if DKP.BroadcastHistoryEntry then
+                            DKP.BroadcastHistoryEntry(historyEntry)
+                        end
                         -- 清空分配
                         itemData.winner = ""
                         itemData.winnerClass = ""
@@ -597,6 +698,7 @@ local function SetItemRowData(row, itemData)
                         DKP.hasUnsavedChanges = true
                         DKP.RefreshTableUI()
                         if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                        if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
                         if DKP.BroadcastSheets then DKP.BroadcastSheets() end
                         DKP.Print("已撤销: " .. link .. " (退还 " .. winner .. " " .. dkpCost .. " DKP)")
                     end,
@@ -963,6 +1065,205 @@ function DKP.SwitchTab(tabKey)
         if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
     end
     f.activeTab = tabKey
+end
+
+----------------------------------------------------------------------
+-- 活动归档
+----------------------------------------------------------------------
+----------------------------------------------------------------------
+-- 创建团队对话框
+----------------------------------------------------------------------
+local createTeamDialog
+
+function DKP.ShowCreateTeamDialog()
+    if not createTeamDialog then
+        local d = CreateFrame("Frame", "YTHTDKPCreateTeamDialog", UIParent, "BackdropTemplate")
+        d:SetSize(340, 170)
+        d:SetPoint("CENTER")
+        d:SetFrameStrata("DIALOG")
+        d:SetFrameLevel(220)
+        d:SetMovable(true)
+        d:EnableMouse(true)
+        d:RegisterForDrag("LeftButton")
+        d:SetScript("OnDragStart", d.StartMoving)
+        d:SetScript("OnDragStop", d.StopMovingOrSizing)
+        d:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            edgeSize = 16, insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+        d:Hide()
+
+        local title = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("创建团队")
+
+        local nameLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        nameLabel:SetPoint("TOPLEFT", 16, -40)
+        nameLabel:SetText("团队名称:")
+
+        local nameBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        nameBox:SetSize(180, 20)
+        nameBox:SetPoint("LEFT", nameLabel, "RIGHT", 8, 0)
+        nameBox:SetAutoFocus(true)
+        d.nameBox = nameBox
+
+        local copyLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        copyLabel:SetPoint("TOPLEFT", 16, -68)
+        copyLabel:SetText("复制数据自:")
+        copyLabel:SetTextColor(0.7, 0.7, 0.7)
+
+        -- 复制源选择（简易按钮组）
+        d.copyFrom = nil
+        local copyBtns = {}
+        local cx = 16
+        d.copyBtnsFrame = CreateFrame("Frame", nil, d)
+        d.copyBtnsFrame:SetPoint("TOPLEFT", 16, -86)
+        d.copyBtnsFrame:SetSize(308, 22)
+        d.refreshCopyBtns = function()
+            for _, b in ipairs(copyBtns) do b:Hide() end
+            copyBtns = {}
+            local xOff = 0
+            -- "空白"选项
+            local emptyBtn = CreateFrame("Button", nil, d.copyBtnsFrame)
+            emptyBtn:SetSize(50, 20)
+            emptyBtn:SetPoint("LEFT", xOff, 0)
+            local emptyBg = emptyBtn:CreateTexture(nil, "BACKGROUND")
+            emptyBg:SetAllPoints()
+            emptyBg:SetColorTexture(0.2, 0.4, 0.2, 0.6)
+            local emptyText = emptyBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            emptyText:SetPoint("CENTER")
+            emptyText:SetText("空白")
+            emptyBtn:SetScript("OnClick", function()
+                d.copyFrom = nil
+                for _, b in ipairs(copyBtns) do b.bg:SetColorTexture(0.15, 0.15, 0.2, 0.6) end
+                emptyBg:SetColorTexture(0.2, 0.4, 0.2, 0.6)
+            end)
+            emptyBtn.bg = emptyBg
+            table.insert(copyBtns, emptyBtn)
+            xOff = xOff + 54
+            for teamID, team in pairs(DKP.db.teams) do
+                local btn = CreateFrame("Button", nil, d.copyBtnsFrame)
+                local tw = math.max(50, (team.name and #team.name * 8 or 40) + 12)
+                btn:SetSize(tw, 20)
+                btn:SetPoint("LEFT", xOff, 0)
+                local bg = btn:CreateTexture(nil, "BACKGROUND")
+                bg:SetAllPoints()
+                bg:SetColorTexture(0.15, 0.15, 0.2, 0.6)
+                btn.bg = bg
+                local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+                hl:SetAllPoints()
+                hl:SetColorTexture(1, 1, 1, 0.1)
+                local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                text:SetPoint("CENTER")
+                text:SetText(team.name or teamID)
+                btn:SetScript("OnClick", function()
+                    d.copyFrom = teamID
+                    for _, b in ipairs(copyBtns) do b.bg:SetColorTexture(0.15, 0.15, 0.2, 0.6) end
+                    bg:SetColorTexture(0.2, 0.3, 0.5, 0.7)
+                end)
+                table.insert(copyBtns, btn)
+                xOff = xOff + tw + 4
+            end
+        end
+
+        local confirmBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        confirmBtn:SetSize(80, 24)
+        confirmBtn:SetPoint("BOTTOMLEFT", 20, 10)
+        confirmBtn:SetText("创建")
+        confirmBtn:SetScript("OnClick", function()
+            local name = d.nameBox:GetText():match("^%s*(.-)%s*$")
+            if not name or name == "" then
+                DKP.Print("请输入团队名称")
+                return
+            end
+            local teamID = DKP.CreateTeam(name, d.copyFrom)
+            if teamID then
+                DKP.SwitchTeam(teamID)
+                DKP.Print("已创建团队: " .. name)
+                d:Hide()
+            end
+        end)
+
+        local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        cancelBtn:SetSize(80, 24)
+        cancelBtn:SetPoint("BOTTOMRIGHT", -20, 10)
+        cancelBtn:SetText("取消")
+        cancelBtn:SetScript("OnClick", function() d:Hide() end)
+
+        nameBox:SetScript("OnEnterPressed", function() confirmBtn:Click() end)
+        nameBox:SetScript("OnEscapePressed", function() d:Hide() end)
+
+        createTeamDialog = d
+    end
+
+    createTeamDialog.nameBox:SetText("")
+    createTeamDialog.copyFrom = nil
+    createTeamDialog.refreshCopyBtns()
+    createTeamDialog:Show()
+    createTeamDialog.nameBox:SetFocus()
+end
+
+----------------------------------------------------------------------
+-- 重命名团队对话框
+----------------------------------------------------------------------
+local renameTeamDialog
+
+function DKP.ShowRenameTeamDialog()
+    if not renameTeamDialog then
+        local d = CreateFrame("Frame", "YTHTDKPRenameTeamDialog", UIParent, "BackdropTemplate")
+        d:SetSize(300, 110)
+        d:SetPoint("CENTER")
+        d:SetFrameStrata("DIALOG")
+        d:SetFrameLevel(220)
+        d:EnableMouse(true)
+        d:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            edgeSize = 16, insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+        d:Hide()
+
+        local title = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("编辑团队名称")
+
+        local nameBox = CreateFrame("EditBox", nil, d, "InputBoxTemplate")
+        nameBox:SetSize(260, 20)
+        nameBox:SetPoint("TOPLEFT", 20, -40)
+        nameBox:SetAutoFocus(true)
+        d.nameBox = nameBox
+
+        local confirmBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        confirmBtn:SetSize(80, 24)
+        confirmBtn:SetPoint("BOTTOMLEFT", 20, 10)
+        confirmBtn:SetText("保存")
+        confirmBtn:SetScript("OnClick", function()
+            local name = d.nameBox:GetText():match("^%s*(.-)%s*$")
+            if not name or name == "" then return end
+            DKP.RenameTeam(DKP.db.currentTeam, name)
+            DKP.Print("团队已重命名为: " .. name)
+            d:Hide()
+        end)
+
+        local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        cancelBtn:SetSize(80, 24)
+        cancelBtn:SetPoint("BOTTOMRIGHT", -20, 10)
+        cancelBtn:SetText("取消")
+        cancelBtn:SetScript("OnClick", function() d:Hide() end)
+
+        nameBox:SetScript("OnEnterPressed", function() confirmBtn:Click() end)
+        nameBox:SetScript("OnEscapePressed", function() d:Hide() end)
+
+        renameTeamDialog = d
+    end
+
+    renameTeamDialog.nameBox:SetText(DKP.GetCurrentTeamName())
+    renameTeamDialog.nameBox:HighlightText()
+    renameTeamDialog:Show()
+    renameTeamDialog.nameBox:SetFocus()
 end
 
 ----------------------------------------------------------------------

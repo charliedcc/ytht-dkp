@@ -2488,6 +2488,9 @@ function DKP.ReverseLogEntry(logIndex)
                 if player then
                     player.dkp = (player.dkp or 0) - amt
                     player.lastUpdated = time()
+                    if DKP.BroadcastDKPChange then
+                        DKP.BroadcastDKPChange(name, player.dkp, -amt, "冲红: " .. (entry.reason or ""))
+                    end
                 end
                 table.insert(reversePlayers, type(d) == "table" and { name = d.name, amount = -d.amount } or name)
             end
@@ -2509,6 +2512,9 @@ function DKP.ReverseLogEntry(logIndex)
                 if player then
                     player.dkp = (player.dkp or 0) + reverseAmount
                     player.lastUpdated = time()
+                    if DKP.BroadcastDKPChange then
+                        DKP.BroadcastDKPChange(name, player.dkp, reverseAmount, "冲红: " .. (entry.reason or ""))
+                    end
                 end
                 table.insert(names, name)
             end
@@ -2532,6 +2538,9 @@ function DKP.ReverseLogEntry(logIndex)
         if player then
             player.dkp = (player.dkp or 0) + reverseAmount
             player.lastUpdated = time()
+            if DKP.BroadcastDKPChange then
+                DKP.BroadcastDKPChange(entry.player, player.dkp, reverseAmount, "冲红: " .. (entry.reason or ""))
+            end
         end
 
         table.insert(DKP.db.log, {
@@ -3218,10 +3227,15 @@ local function ShowLogDialog()
                 (entry.reason or "")
         end
 
+        local canReverse = DKP.IsOfficer and DKP.IsOfficer()
+
         if entry.reversed then
             row.reverseBtn:SetText("已冲")
             row.reverseBtn:Disable()
         elseif entry.type == "reverse" then
+            row.reverseBtn:SetText("冲红")
+            row.reverseBtn:Disable()
+        elseif not canReverse then
             row.reverseBtn:SetText("冲红")
             row.reverseBtn:Disable()
         else

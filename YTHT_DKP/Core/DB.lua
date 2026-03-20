@@ -66,6 +66,73 @@ local globalDefaults = {
 ----------------------------------------------------------------------
 -- 填充默认值工具
 ----------------------------------------------------------------------
+----------------------------------------------------------------------
+-- 生成唯一团队ID
+----------------------------------------------------------------------
+function DKP.GenerateTeamID()
+    -- 格式: team_时间戳_随机数_角色名
+    local t = time()
+    local r = math.random(10000, 99999)
+    local name = DKP.playerName or "unknown"
+    return "team_" .. t .. "_" .. r .. "_" .. name
+end
+
+----------------------------------------------------------------------
+-- 创建新团队
+----------------------------------------------------------------------
+function DKP.CreateTeam(teamName, copyFromID)
+    if not DKP.db or not DKP.db.teams then return nil end
+
+    local teamID = DKP.GenerateTeamID()
+
+    local newTeam
+    if copyFromID and DKP.db.teams[copyFromID] then
+        newTeam = CopyTable(DKP.db.teams[copyFromID])
+    else
+        newTeam = CopyTable(teamDefaults)
+    end
+
+    newTeam.name = teamName or "新团队"
+    newTeam.masterAdmin = DKP.playerName
+    newTeam.admins = { [DKP.playerName] = true }
+
+    DKP.db.teams[teamID] = newTeam
+    return teamID
+end
+
+----------------------------------------------------------------------
+-- 重命名团队
+----------------------------------------------------------------------
+function DKP.RenameTeam(teamID, newName)
+    if not DKP.db or not DKP.db.teams then return false end
+    local team = DKP.db.teams[teamID]
+    if not team then return false end
+    team.name = newName
+    if DKP.MainFrame and DKP.MainFrame.teamBtn and DKP.db.currentTeam == teamID then
+        DKP.MainFrame.teamBtn.text:SetText(newName)
+    end
+    return true
+end
+
+----------------------------------------------------------------------
+-- 删除团队
+----------------------------------------------------------------------
+function DKP.DeleteTeam(teamID)
+    if not DKP.db or not DKP.db.teams then return false end
+    if teamID == "local" then
+        DKP.Print("不能删除本地团队")
+        return false
+    end
+    if DKP.db.currentTeam == teamID then
+        DKP.SwitchTeam("local")
+    end
+    DKP.db.teams[teamID] = nil
+    return true
+end
+
+----------------------------------------------------------------------
+-- 填充默认值工具
+----------------------------------------------------------------------
 local function FillDefaults(target, defaults)
     for k, v in pairs(defaults) do
         if target[k] == nil then
