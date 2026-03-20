@@ -138,11 +138,11 @@ end
 ----------------------------------------------------------------------
 -- 分包发送
 ----------------------------------------------------------------------
+local CHUNK_SEND_INTERVAL = 0.05  -- 每个 chunk 间隔 50ms，避免 WoW 节流
+
 local function SendChunked(prefix, msgType, data, channel, target)
     -- 动态计算 chunk 大小，确保总消息 <= 255 字节
-    -- 头部格式: msgType\tchunkIndex\ttotalChunks\t
-    -- 预估最大头部: msgType(15) + \t + chunkIndex(4) + \t + totalChunks(4) + \t = ~25
-    local headerReserve = #msgType + 12  -- msgType长度 + 数字和分隔符
+    local headerReserve = #msgType + 12
     local chunkSize = 255 - headerReserve
     if chunkSize < 50 then chunkSize = 50 end
 
@@ -151,15 +151,18 @@ local function SendChunked(prefix, msgType, data, channel, target)
     if numChunks == 0 then numChunks = 1 end
 
     for i = 1, numChunks do
-        local startPos = (i - 1) * chunkSize + 1
-        local endPos = math.min(i * chunkSize, totalLen)
-        local chunk = data:sub(startPos, endPos)
-        local msg = table.concat({ msgType, tostring(i), tostring(numChunks), chunk }, MSG_SEP)
-        if target then
-            C_ChatInfo.SendAddonMessage(prefix, msg, "WHISPER", target)
-        else
-            C_ChatInfo.SendAddonMessage(prefix, msg, channel or "RAID")
-        end
+        -- 用延迟发送避免 WoW addon message 节流
+        C_Timer.After((i - 1) * CHUNK_SEND_INTERVAL, function()
+            local startPos = (i - 1) * chunkSize + 1
+            local endPos = math.min(i * chunkSize, totalLen)
+            local chunk = data:sub(startPos, endPos)
+            local msg = table.concat({ msgType, tostring(i), tostring(numChunks), chunk }, MSG_SEP)
+            if target then
+                C_ChatInfo.SendAddonMessage(prefix, msg, "WHISPER", target)
+            else
+                C_ChatInfo.SendAddonMessage(prefix, msg, channel or "RAID")
+            end
+        end)
     end
 end
 
@@ -555,8 +558,8 @@ function DKP.BroadcastFullSync()
         DKP.Print("已广播: 配置")
     end)
 
-    -- 第3批: sheets（延迟2秒）
-    C_Timer.After(2, function()
+    -- 第3批: sheets（延迟3秒）
+    C_Timer.After(3, function()
         local ch = GetChannel()
         if not ch then return end
         if DKP.SerializeSheets then
@@ -568,8 +571,8 @@ function DKP.BroadcastFullSync()
         end
     end)
 
-    -- 第4批: log + auctionHistory（延迟3秒，不含 players 避免冗余）
-    C_Timer.After(3, function()
+    -- 第4批: log + auctionHistory（延迟6秒，等前面的 chunks 发完）
+    C_Timer.After(6, function()
         local ch = GetChannel()
         if not ch then
             DKP.Print("|cffFF8800[调试] 第4批: 无频道，跳过|r")
