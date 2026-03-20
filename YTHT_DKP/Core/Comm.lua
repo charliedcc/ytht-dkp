@@ -293,20 +293,25 @@ end
 ----------------------------------------------------------------------
 -- 发送者信任检查（当前团队的管理员才信任）
 ----------------------------------------------------------------------
+local function GetShortName(fullName)
+    if not fullName then return "" end
+    local dashPos = fullName:find("-", 1, true)  -- plain find, 不用 pattern
+    if dashPos then
+        return fullName:sub(1, dashPos - 1)
+    end
+    return fullName
+end
+
 local function IsTrustedSender(sender)
-    local senderShort = sender:match("^([^%-]+)") or sender
+    local senderShort = GetShortName(sender)
     -- 当前团队有 admins 列表时，发送者必须在其中（短名或全称都匹配）
     if DKP.db.admins and next(DKP.db.admins) then
         local trusted = DKP.db.admins[senderShort] == true or DKP.db.admins[sender] == true
         if not trusted then
-            DKP.Print("|cffFF8800[调试] 不信任发送者: " .. senderShort .. " / " .. sender .. "|r")
-            local adminList = {}
-            for n in pairs(DKP.db.admins) do table.insert(adminList, n) end
-            DKP.Print("|cff888888[调试] 当前admins: " .. table.concat(adminList, ", ") .. "|r")
+            DKP.Print("|cffFF8800[调试] 不信任: " .. senderShort .. "|r")
         end
         return trusted
     end
-    -- 没有 admins 列表（应该不会发生）, 允许
     return true
 end
 
@@ -429,7 +434,7 @@ local function HandleTeamSync(parts, sender)
     end
     if masterAdmin == "" then masterAdmin = nil end
 
-    local senderShort = sender:match("^([^%-]+)") or sender
+    local senderShort = GetShortName(sender)
 
     local newAdmins = {}
     for name in adminsStr:gmatch("[^;]+") do newAdmins[name] = true end
@@ -445,7 +450,7 @@ local function HandleTeamSync(parts, sender)
     local myFullName = DKP.playerFullName
     local isMember = false
     for name in charsStr:gmatch("[^;]+") do
-        local nameShort = name:match("^([^%-]+)") or name
+        local nameShort = GetShortName(name)
         if name == myName or nameShort == myName or name == myFullName then
             isMember = true; break
         end
@@ -617,7 +622,7 @@ local function HandleHistoryChunk(parts, sender)
         pendingHistorySync[sKey] = nil
 
         if not IsTrustedSender(sender) then return end
-        local senderShort = sender:match("^([^%-]+)") or sender
+        local senderShort = GetShortName(sender)
 
         -- 解析 \031 分隔的字段
         local f = { strsplit("\031", data) }
@@ -948,7 +953,7 @@ local function HandleActivityChunk(parts, sender)
         if DKP.DeserializeActivity then
             local act = DKP.DeserializeActivity(text)
             if act then
-                local senderShort = sender:match("^([^%-]+)") or sender
+                local senderShort = GetShortName(sender)
                 -- 同步 log（替换）
                 if act.log and #act.log > 0 then
                     DKP.db.log = act.log
@@ -1005,7 +1010,7 @@ local function HandleSheetsChunk(parts, sender)
         local newSheets = DKP.DeserializeSheets(text)
         if not next(newSheets) then return end
 
-        local senderShort = sender:match("^([^%-]+)") or sender
+        local senderShort = GetShortName(sender)
 
         -- 合并掉落列表（按 sheetName + encounterID + rollID 去重）
         for sheetName, newSheet in pairs(newSheets) do
@@ -1089,7 +1094,7 @@ local function HandleOptionsChunk(parts, sender)
             for k, v in pairs(newOpts) do
                 DKP.db.options[k] = v
             end
-            local senderShort = sender:match("^([^%-]+)") or sender
+            local senderShort = GetShortName(sender)
             DKP.Print("已同步配置 (来自 " .. senderShort .. ")")
         end
     end
@@ -1142,7 +1147,7 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
             local playerName = parts[3] or "?"
             local teamName = parts[4] or "?"
             local teamID = parts[5] or "?"
-            local senderShort2 = sender:match("^([^%-]+)") or sender
+            local senderShort2 = GetShortName(sender)
             if DKP._versionResults then
                 DKP._versionResults[senderShort2] = { version = version, name = playerName, teamName = teamName, teamID = teamID, time = GetTime() }
                 if DKP._refreshVersionUI then DKP._refreshVersionUI() end
