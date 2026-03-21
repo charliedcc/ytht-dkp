@@ -352,6 +352,13 @@ function DKP.ShowManualAssignDialog(itemLink, itemData, bossData)
 
     -- 确定按钮回调
     d.confirmBtn:SetScript("OnClick", function()
+        -- 防止两个管理员同时分配同一物品
+        if itemData and itemData.winner and itemData.winner ~= "" and itemData.winner ~= "转人工" then
+            DKP.Print("该物品已被分配给 " .. itemData.winner)
+            d:Hide()
+            return
+        end
+
         local selectedPlayer = d.selectedPlayer
         if not selectedPlayer then
             DKP.Print("请先选择一个玩家")

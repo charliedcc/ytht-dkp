@@ -318,6 +318,30 @@ local function HandleDKPChange(parts, sender)
 
     if not playerName or not newDKP then return end
 
+    -- 如果收到其他管理员的 Boss 击杀加分，标记本地 bossKills 防止重复
+    if reason:find("Boss击杀:") and DKP.db.session then
+        -- 从 reason 提取 encounterName，标记已加分
+        local bossName = reason:match("Boss击杀: ([^(]+)")
+        if bossName then
+            bossName = bossName:match("^%s*(.-)%s*$")
+            -- 查找对应的 encounterID
+            if DKP.db.sheets then
+                for _, sheet in pairs(DKP.db.sheets) do
+                    for _, boss in ipairs(sheet.bosses or {}) do
+                        if boss.name == bossName and boss.encounterID then
+                            DKP.db.session.bossKills[boss.encounterID] = true
+                        end
+                    end
+                end
+            end
+        end
+        -- 关闭本地的 boss 击杀确认框（如果还开着）
+        if DKP._bossKillConfirmDialog and DKP._bossKillConfirmDialog:IsShown() then
+            DKP._bossKillConfirmDialog:Hide()
+            DKP.Print("其他管理员已执行Boss击杀加分，自动跳过")
+        end
+    end
+
     -- 更新本地数据
     if DKP.db.players[playerName] then
         DKP.db.players[playerName].dkp = newDKP

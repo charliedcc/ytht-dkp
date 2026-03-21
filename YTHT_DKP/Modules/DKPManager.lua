@@ -24,11 +24,14 @@ local CLASS_NAMES = {
 
 -- UI 常量
 local TOOLBAR_HEIGHT = 56
-local ROW_HEIGHT = 26
-local COL_NAME_WIDTH = 120
-local COL_CHARS_WIDTH = 320
-local COL_DKP_WIDTH = 80
-local COL_OPS_WIDTH = 200
+local ROW_HEIGHT = 22
+local DKP_LIST_COLS = 2        -- 两列显示
+local DKP_COL_SPACING = 6
+-- 单列内布局
+local COL_NAME_WIDTH = 100
+local COL_CHARS_WIDTH = 180
+local COL_DKP_WIDTH = 50
+local COL_OPS_WIDTH = 60
 local PADDING = 10
 local CONTENT_WIDTH = 820 - PADDING * 2 - 24
 
@@ -40,7 +43,7 @@ local ROW_ALT_BG = { r = 0.13, g = 0.13, b = 0.18, a = 0.7 }
 
 -- 运行时状态
 local charToPlayer = {}
-local sortField = "dkp"
+local sortField = "class"
 local sortAscending = false
 local searchText = ""
 
@@ -332,9 +335,26 @@ function DKP.ChangeCharacterClass(playerName, charName, newClass)
     return false
 end
 
+-- 职业排序权重
+local CLASS_SORT = {
+    WARRIOR = 1, PALADIN = 2, DEATHKNIGHT = 3,
+    HUNTER = 4, ROGUE = 5, MONK = 6,
+    PRIEST = 7, SHAMAN = 8, MAGE = 9,
+    WARLOCK = 10, DRUID = 11, DEMONHUNTER = 12, EVOKER = 13,
+}
+
 function DKP.GetSortedPlayers()
     local list = {}
     if not DKP.db then return list end
+
+    -- 收集当前团队/队伍成员名（用于在团角色优先）
+    local raidChars = {}
+    if DKP.GetRaidMembers then
+        for _, m in ipairs(DKP.GetRaidMembers()) do
+            if m.shortName then raidChars[m.shortName] = true end
+        end
+    end
+
     for name, data in pairs(DKP.db.players) do
         local match = false
         if searchText == "" then
@@ -350,7 +370,28 @@ function DKP.GetSortedPlayers()
             end
         end
         if match then
-            table.insert(list, { name = name, data = data })
+            -- 找出主显示角色（在团的优先，否则第一个）
+            local primaryChar = nil
+            local primaryClass = "WARRIOR"
+            local inRaid = false
+            for _, char in ipairs(data.characters or {}) do
+                if raidChars[char.name] then
+                    primaryChar = char.name
+                    primaryClass = char.class or "WARRIOR"
+                    inRaid = true
+                    break
+                end
+            end
+            if not primaryChar and data.characters and #data.characters > 0 then
+                primaryChar = data.characters[1].name
+                primaryClass = data.characters[1].class or "WARRIOR"
+            end
+            table.insert(list, {
+                name = name, data = data,
+                primaryChar = primaryChar or name,
+                primaryClass = primaryClass,
+                inRaid = inRaid,
+            })
         end
     end
     table.sort(list, function(a, b)
@@ -360,6 +401,11 @@ function DKP.GetSortedPlayers()
             else
                 return (a.data.dkp or 0) > (b.data.dkp or 0)
             end
+        elseif sortField == "class" then
+            local ca = CLASS_SORT[a.primaryClass] or 99
+            local cb = CLASS_SORT[b.primaryClass] or 99
+            if ca ~= cb then return ca < cb end
+            return (a.data.dkp or 0) > (b.data.dkp or 0)
         else
             if sortAscending then
                 return a.name < b.name
@@ -3343,45 +3389,42 @@ local function CreatePlayerRow(parent, index)
     bg:SetColorTexture(bgColor.r, bgColor.g, bgColor.b, bgColor.a)
     row.bg = bg
 
-    -- 高亮
     local hl = row:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints()
     hl:SetColorTexture(1, 1, 1, 0.05)
 
-    -- 玩家名
-    local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    -- 角色名（职业颜色，替代旧的"玩家名"列）
+    local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     nameText:SetPoint("LEFT", row, "LEFT", 4, 0)
-    nameText:SetWidth(COL_NAME_WIDTH - 8)
+    nameText:SetWidth(COL_NAME_WIDTH - 4)
     nameText:SetJustifyH("LEFT")
     nameText:SetWordWrap(false)
     row.nameText = nameText
 
     -- 角色列表
     local charsText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    charsText:SetPoint("LEFT", row, "LEFT", COL_NAME_WIDTH + 4, 0)
-    charsText:SetWidth(COL_CHARS_WIDTH - 8)
+    charsText:SetPoint("LEFT", row, "LEFT", COL_NAME_WIDTH + 2, 0)
+    charsText:SetWidth(COL_CHARS_WIDTH - 4)
     charsText:SetJustifyH("LEFT")
     charsText:SetWordWrap(false)
     row.charsText = charsText
 
     -- DKP
-    local dkpText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    dkpText:SetPoint("LEFT", row, "LEFT", COL_NAME_WIDTH + COL_CHARS_WIDTH + 4, 0)
-    dkpText:SetWidth(COL_DKP_WIDTH - 8)
+    local dkpText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    dkpText:SetPoint("LEFT", row, "LEFT", COL_NAME_WIDTH + COL_CHARS_WIDTH + 2, 0)
+    dkpText:SetWidth(COL_DKP_WIDTH - 4)
     dkpText:SetJustifyH("RIGHT")
     row.dkpText = dkpText
 
-    -- 操作按钮
-    local opsX = COL_NAME_WIDTH + COL_CHARS_WIDTH + COL_DKP_WIDTH + 8
-
+    -- 编辑按钮
     local editBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    editBtn:SetSize(44, 20)
-    editBtn:SetPoint("LEFT", row, "LEFT", opsX, 0)
+    editBtn:SetSize(32, 18)
+    editBtn:SetPoint("LEFT", row, "LEFT", COL_NAME_WIDTH + COL_CHARS_WIDTH + COL_DKP_WIDTH + 4, 0)
     editBtn:SetText("编辑")
     row.editBtn = editBtn
 
     local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    delBtn:SetSize(44, 20)
+    delBtn:SetSize(32, 18)
     delBtn:SetPoint("LEFT", editBtn, "RIGHT", 2, 0)
     delBtn:SetText("删除")
     row.delBtn = delBtn
@@ -3546,8 +3589,8 @@ function DKP.InitDKPPanel()
         return btn
     end
 
-    CreateSortableHeader("玩家名", 0, COL_NAME_WIDTH, "name")
-    CreateSortableHeader("角色", COL_NAME_WIDTH, COL_CHARS_WIDTH, nil)
+    CreateSortableHeader("角色", 0, COL_NAME_WIDTH, "class")
+    CreateSortableHeader("其他角色", COL_NAME_WIDTH, COL_CHARS_WIDTH, nil)
     CreateSortableHeader("DKP", COL_NAME_WIDTH + COL_CHARS_WIDTH, COL_DKP_WIDTH, "dkp")
     CreateSortableHeader("操作", COL_NAME_WIDTH + COL_CHARS_WIDTH + COL_DKP_WIDTH, COL_OPS_WIDTH, nil)
 
@@ -3578,11 +3621,11 @@ function DKP.RefreshDKPUI()
     local scrollChild = parent.scrollChild
     local players = DKP.GetSortedPlayers()
 
-    -- 权限控制：非管理员隐藏管理按钮
-    local isOfficer = DKP.IsOfficer and DKP.IsOfficer() or false
+    -- 权限控制：非管理模式或非管理员隐藏管理按钮
+    local isAdmin = (DKP.IsAdminMode and DKP.IsAdminMode()) and (DKP.IsOfficer and DKP.IsOfficer()) or false
     if parent.adminButtons then
         for _, btn in ipairs(parent.adminButtons) do
-            btn:SetShown(isOfficer)
+            btn:SetShown(isAdmin)
         end
     end
 
@@ -3595,6 +3638,9 @@ function DKP.RefreshDKPUI()
         parent.countText:SetText("共 " .. total .. " 名玩家")
     end
 
+    -- 两列布局
+    local colWidth = math.floor((scrollChild:GetWidth() - DKP_COL_SPACING) / DKP_LIST_COLS)
+
     for i, entry in ipairs(players) do
         local row = parent.playerRows[i]
         if not row then
@@ -3602,26 +3648,31 @@ function DKP.RefreshDKPUI()
             parent.playerRows[i] = row
         end
 
-        row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -(i - 1) * (ROW_HEIGHT + 2))
-        row:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
+        -- 两列定位
+        local col = (i - 1) % DKP_LIST_COLS
+        local rowNum = math.floor((i - 1) / DKP_LIST_COLS)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", col * (colWidth + DKP_COL_SPACING), -rowNum * (ROW_HEIGHT + 2))
+        row:SetWidth(colWidth)
 
-        -- 更新交替背景色
-        local bgColor = (i % 2 == 0) and ROW_ALT_BG or ROW_BG
+        -- 交替背景色
+        local bgColor = (rowNum % 2 == 0) and ROW_BG or ROW_ALT_BG
         row.bg:SetColorTexture(bgColor.r, bgColor.g, bgColor.b, bgColor.a)
 
-        -- 玩家名
-        row.nameText:SetText(entry.name)
-        row.nameText:SetTextColor(1, 0.82, 0)
+        -- 主角色名（职业颜色，在团的优先显示）
+        row.nameText:SetText(DKP.ClassColorText(entry.primaryChar, entry.primaryClass))
 
-        -- 角色列表
+        -- 其他角色列表
         local charParts = {}
         for _, char in ipairs(entry.data.characters or {}) do
-            table.insert(charParts, DKP.ClassColorText(char.name, char.class))
+            if char.name ~= entry.primaryChar then
+                table.insert(charParts, DKP.ClassColorText(char.name, char.class))
+            end
         end
         if #charParts > 0 then
-            row.charsText:SetText(table.concat(charParts, ", "))
+            row.charsText:SetText(table.concat(charParts, ","))
         else
-            row.charsText:SetText("|cff555555(无角色)|r")
+            row.charsText:SetText("")
         end
 
         -- DKP
@@ -3667,5 +3718,6 @@ function DKP.RefreshDKPUI()
     end
 
     -- 更新滚动区域高度
-    scrollChild:SetHeight(math.max(1, #players * (ROW_HEIGHT + 2)))
+    local totalRows = math.ceil(#players / DKP_LIST_COLS)
+    scrollChild:SetHeight(math.max(1, totalRows * (ROW_HEIGHT + 2)))
 end

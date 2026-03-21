@@ -1,83 +1,127 @@
 ----------------------------------------------------------------------
 -- YTHT DKP - Auto Trade (自动交易)
 --
--- 当交易窗口打开时，自动将分配给交易对象的装备放入交易窗口
+-- 管理员（拾取者）与获得者交易时，自动将分配的装备放入交易窗口
+-- 交易成功后标记物品已交易，避免重复
+-- 使用完整 itemLink 匹配（区分同 ID 不同属性的装备）
 ----------------------------------------------------------------------
 
 local DKP = YTHT_DKP
 
+local pendingTradeItems = {}  -- 本次交易放入的 itemData 引用
+
+-- 从 itemLink 提取匹配 key（item:ID:enchant:gem1:...）
+-- 比纯 itemID 更精确，能区分不同属性的同一装备
+local function GetItemMatchKey(itemLink)
+    if not itemLink then return nil end
+    -- 提取 |Hitem:xxxxx:...:| 部分
+    local itemString = itemLink:match("|H(item:[^|]+)|h")
+    return itemString
+end
+
 local f = CreateFrame("Frame")
 f:RegisterEvent("TRADE_SHOW")
+f:RegisterEvent("TRADE_ACCEPT_UPDATE")
 
-f:SetScript("OnEvent", function(self, event)
-    if event ~= "TRADE_SHOW" then return end
-    if not DKP.db or not DKP.db.sheets then return end
+f:SetScript("OnEvent", function(self, event, ...)
+    if event == "TRADE_SHOW" then
+        -- 只有管理模式触发自动交易
+        if not DKP.IsAdminMode or not DKP.IsAdminMode() then return end
+        if not DKP.db or not DKP.db.sheets then return end
 
-    -- 获取交易对象名字
-    local tradeName = GetTradePlayerName()
-    if not tradeName then return end
+        wipe(pendingTradeItems)
 
-    -- 提取短名（去掉服务器后缀）
-    local tradeShort = tradeName
-    local dashPos = tradeName:find("-", 1, true)
-    if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
+        local tradeName = GetTradePlayerName()
+        if not tradeName then return end
 
-    -- 查找分配给该玩家的物品
-    local itemsToTrade = {}
-    for _, sheet in pairs(DKP.db.sheets) do
-        for _, boss in ipairs(sheet.bosses or {}) do
-            for _, item in ipairs(boss.items or {}) do
-                if item.winner and item.winner ~= "" and item.link then
-                    -- 匹配 winner（可能是角色名或玩家名）
-                    local winnerShort = item.winner
-                    local dp = item.winner:find("-", 1, true)
-                    if dp then winnerShort = item.winner:sub(1, dp - 1) end
+        local tradeShort = tradeName
+        local dashPos = tradeName:find("-", 1, true)
+        if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
 
-                    if winnerShort == tradeShort or item.winner == tradeName then
-                        table.insert(itemsToTrade, item.link)
+        -- 查找分配给该玩家且未交易的物品
+        local itemsToTrade = {}
+        for _, sheet in pairs(DKP.db.sheets) do
+            for _, boss in ipairs(sheet.bosses or {}) do
+                for _, item in ipairs(boss.items or {}) do
+                    if item.winner and item.winner ~= "" and item.link and not item.traded then
+                        local winnerShort = item.winner
+                        local dp = item.winner:find("-", 1, true)
+                        if dp then winnerShort = item.winner:sub(1, dp - 1) end
+
+                        if winnerShort == tradeShort or item.winner == tradeName then
+                            table.insert(itemsToTrade, {
+                                itemData = item,
+                                link = item.link,
+                                matchKey = GetItemMatchKey(item.link),
+                            })
+                        end
                     end
                 end
             end
         end
-    end
 
-    if #itemsToTrade == 0 then return end
+        if #itemsToTrade == 0 then return end
 
-    -- 在背包里查找并放入交易窗
-    local placed = 0
-    for _, itemLink in ipairs(itemsToTrade) do
-        -- 提取 itemID 用于匹配
-        local targetID = C_Item.GetItemInfoInstant(itemLink)
-        if targetID then
+        -- 在背包里查找并放入交易窗
+        local placed = 0
+        local usedSlots = {}  -- 防止同一格子被匹配两次
+
+        for _, entry in ipairs(itemsToTrade) do
             local found = false
             for bag = 0, 4 do
                 local numSlots = C_Container.GetContainerNumSlots(bag)
                 for slot = 1, numSlots do
-                    local bagLink = C_Container.GetContainerItemLink(bag, slot)
-                    if bagLink then
-                        local bagID = C_Item.GetItemInfoInstant(bagLink)
-                        if bagID == targetID then
-                            -- 放入交易窗
-                            C_Container.PickupContainerItem(bag, slot)
-                            ClickTradeButton(placed + 1)
-                            placed = placed + 1
-                            found = true
+                    local slotKey = bag .. ":" .. slot
+                    if not usedSlots[slotKey] then
+                        local bagLink = C_Container.GetContainerItemLink(bag, slot)
+                        if bagLink then
+                            -- 优先用完整 itemString 匹配（区分属性）
+                            local bagMatchKey = GetItemMatchKey(bagLink)
+                            local isMatch = false
+                            if entry.matchKey and bagMatchKey then
+                                isMatch = (entry.matchKey == bagMatchKey)
+                            else
+                                -- fallback: itemID 匹配
+                                local targetID = C_Item.GetItemInfoInstant(entry.link)
+                                local bagID = C_Item.GetItemInfoInstant(bagLink)
+                                isMatch = (targetID and bagID and targetID == bagID)
+                            end
 
-                            local itemName = bagLink:match("%[(.-)%]") or bagLink
-                            DKP.Print("自动交易: " .. itemName .. " → " .. tradeShort)
-                            break
+                            if isMatch then
+                                C_Container.PickupContainerItem(bag, slot)
+                                ClickTradeButton(placed + 1)
+                                placed = placed + 1
+                                found = true
+                                usedSlots[slotKey] = true
+                                table.insert(pendingTradeItems, entry.itemData)
+
+                                local itemName = bagLink:match("%[(.-)%]") or bagLink
+                                DKP.Print("自动交易: " .. itemName .. " → " .. tradeShort)
+                                break
+                            end
                         end
                     end
                 end
                 if found then break end
             end
+            if placed >= 6 then break end
         end
 
-        -- 交易窗最多放 6 个物品
-        if placed >= 6 then break end
-    end
+        if placed > 0 then
+            DKP.Print("已放入 " .. placed .. " 件装备 (请手动确认交易)")
+        end
 
-    if placed > 0 then
-        DKP.Print("已自动放入 " .. placed .. " 件装备到交易窗口 (请手动确认交易)")
+    elseif event == "TRADE_ACCEPT_UPDATE" then
+        local playerAccepted, targetAccepted = ...
+        if playerAccepted == 1 and targetAccepted == 1 then
+            for _, itemData in ipairs(pendingTradeItems) do
+                itemData.traded = true
+            end
+            if #pendingTradeItems > 0 then
+                DKP.Print("交易完成，" .. #pendingTradeItems .. " 件装备已标记为已交易")
+                DKP.hasUnsavedChanges = true
+            end
+            wipe(pendingTradeItems)
+        end
     end
 end)

@@ -60,8 +60,34 @@ local teamDefaults = {
 local globalDefaults = {
     teams = {},
     currentTeam = "local",
+    mode = "member",  -- "member" = 团员模式(默认), "admin" = 管理模式
     point = {},
 }
+
+----------------------------------------------------------------------
+-- 模式检查
+----------------------------------------------------------------------
+function DKP.IsAdminMode()
+    return DKP.db and DKP.db.mode == "admin"
+end
+
+function DKP.SetMode(mode)
+    if not DKP.db then return false end
+    if mode == "admin" then
+        if not DKP.IsOfficer or not DKP.IsOfficer() then
+            DKP.Print("你不是当前团队的管理员，无法切换到管理模式")
+            return false
+        end
+        DKP.db.mode = "admin"
+        DKP.Print("|cff00FF00已切换到管理模式|r")
+    else
+        DKP.db.mode = "member"
+        DKP.Print("|cff00FF00已切换到团员模式|r")
+    end
+    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+    if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+    return true
+end
 
 ----------------------------------------------------------------------
 -- 填充默认值工具

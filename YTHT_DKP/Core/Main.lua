@@ -368,7 +368,7 @@ local function CreateMainFrame()
     clearSheetBtn:SetPoint("RIGHT", headerBg, "RIGHT", 0, 0)
     clearSheetBtn:SetText("清空列表")
     clearSheetBtn:SetScript("OnClick", function()
-        if not DKP.IsOfficer or not DKP.IsOfficer() then return end
+        -- 团员模式也可以清空本地数据（不广播）
         StaticPopupDialogs["YTHT_DKP_CLEAR_SHEET"] = {
             text = "确定要清空所有掉落列表吗？\n(所有副本的Boss和装备记录将被删除)",
             button1 = "确定",
@@ -622,7 +622,7 @@ local function SetItemRowData(row, itemData)
     row.manualBtn:Hide()
     row.statusText:Hide()
 
-    local isOfficer = DKP.IsOfficer and DKP.IsOfficer()
+    local isOfficer = (DKP.IsAdminMode and DKP.IsAdminMode()) and (DKP.IsOfficer and DKP.IsOfficer())
 
     -- 清理过期的 activeAuctionID
     if itemData.activeAuctionID and not DKP.activeAuctions[itemData.activeAuctionID] then
@@ -1704,7 +1704,8 @@ function DKP.CreateMiniButton()
     btn:SetScript("OnEnter", function(self)
         bg:SetColorTexture(0, 0.8, 1, 0.9)
         GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-        GameTooltip:AddLine("YTHT DKP v" .. (DKP.version or "?"))
+        local modeStr = (DKP.IsAdminMode and DKP.IsAdminMode()) and "|cffFF8800管理模式|r" or "|cff00FF00团员模式|r"
+        GameTooltip:AddLine("YTHT DKP v" .. (DKP.version or "?") .. " " .. modeStr)
         GameTooltip:AddLine("左键: 打开/关闭主界面", 0.8, 0.8, 0.8)
         GameTooltip:AddLine("拖拽: 移动位置", 0.8, 0.8, 0.8)
         GameTooltip:AddLine("/ytht btn - 显示/隐藏此按钮", 0.6, 0.6, 0.6)
@@ -2112,6 +2113,18 @@ function DKP.OnInitialized()
                 DKP.Print("  /ytht debug reset      - 重置拍卖/session状态")
             end
 
+        elseif cmd == "mode" then
+            if arg1 == "admin" then
+                DKP.SetMode("admin")
+            elseif arg1 == "member" then
+                DKP.SetMode("member")
+            else
+                local current = DKP.IsAdminMode() and "管理模式" or "团员模式"
+                DKP.Print("当前模式: " .. current)
+                DKP.Print("  /ytht mode admin  - 切换到管理模式")
+                DKP.Print("  /ytht mode member - 切换到团员模式")
+            end
+
         elseif cmd == "btn" or cmd == "button" then
             DKP.ToggleMiniButton()
 
@@ -2128,6 +2141,7 @@ function DKP.OnInitialized()
             DKP.Print("/ytht bossbonus  - Boss击杀加分配置")
             DKP.Print("/ytht status     - 显示当前状态")
             DKP.Print("/ytht reset <名> - 重置指定副本数据")
+            DKP.Print("/ytht mode       - 切换管理/团员模式")
             DKP.Print("/ytht btn        - 显示/隐藏悬浮按钮")
             DKP.Print("/ytht debug      - 调试命令")
             DKP.Print("/ytht help       - 显示此帮助")
