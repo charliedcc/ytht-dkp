@@ -1828,6 +1828,43 @@ function DKP.OnInitialized()
         end
     end
 
+    -- 迁移历史日志：将玩家名转为角色名
+    if DKP.db.log and DKP.db.players and not DKP.db._logMigratedToCharNames then
+        local migrated = 0
+        for _, entry in ipairs(DKP.db.log) do
+            -- 单人条目
+            if entry.player and DKP.db.players[entry.player] then
+                local dn = DKP.GetDisplayName and DKP.GetDisplayName(entry.player)
+                if dn and dn ~= entry.player then
+                    entry.player = dn
+                    migrated = migrated + 1
+                end
+            end
+            -- 批量条目
+            if entry.players then
+                for i, name in ipairs(entry.players) do
+                    if type(name) == "string" and DKP.db.players[name] then
+                        local dn = DKP.GetDisplayName and DKP.GetDisplayName(name)
+                        if dn and dn ~= name then
+                            entry.players[i] = dn
+                            migrated = migrated + 1
+                        end
+                    elseif type(name) == "table" and name.name and DKP.db.players[name.name] then
+                        local dn = DKP.GetDisplayName and DKP.GetDisplayName(name.name)
+                        if dn and dn ~= name.name then
+                            name.name = dn
+                            migrated = migrated + 1
+                        end
+                    end
+                end
+            end
+        end
+        DKP.db._logMigratedToCharNames = true
+        if migrated > 0 then
+            DKP.Print("|cff00FF00已迁移 " .. migrated .. " 条日志记录为角色名显示|r")
+        end
+    end
+
     -- 创建主框架
     DKP.MainFrame = CreateMainFrame()
 
@@ -1909,12 +1946,14 @@ function DKP.OnInitialized()
             local points = DKP.db.options.gatherPoints or 3
             local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
             local names = {}
+            local charNames = {}
             for _, m in ipairs(members) do
                 if m.playerName and m.online then
                     table.insert(names, m.playerName)
+                    table.insert(charNames, m.shortName)
                 end
             end
-            local count = DKP.BulkAdjustDKPBatch(names, points, "集合")
+            local count = DKP.BulkAdjustDKPBatch(names, points, "集合", charNames)
             DKP.Print("集合加分: " .. count .. " 名玩家 +" .. points .. " DKP")
             local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
             if channel then
@@ -1930,12 +1969,14 @@ function DKP.OnInitialized()
             local points = DKP.db.options.dismissPoints or 2
             local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
             local names = {}
+            local charNames = {}
             for _, m in ipairs(members) do
                 if m.playerName and m.online then
                     table.insert(names, m.playerName)
+                    table.insert(charNames, m.shortName)
                 end
             end
-            local count = DKP.BulkAdjustDKPBatch(names, points, "解散")
+            local count = DKP.BulkAdjustDKPBatch(names, points, "解散", charNames)
             DKP.Print("解散加分: " .. count .. " 名玩家 +" .. points .. " DKP")
             DKP.db.session.active = false
             DKP.db.session.gathered = false

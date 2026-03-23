@@ -41,21 +41,24 @@ end
 
 ----------------------------------------------------------------------
 -- 同步确认弹窗（管理员收到同步数据时确认）
+-- 每种数据类型用独立弹窗名，避免后到的弹窗覆盖前一个
 ----------------------------------------------------------------------
-StaticPopupDialogs["YTHT_DKP_SYNC_CONFIRM"] = {
-    text = "%s",
-    button1 = "接受",
-    button2 = "拒绝",
-    OnAccept = function(self, data)
-        if data and data.apply then
-            data.apply()
-        end
-    end,
-    timeout = 60,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
+for _, suffix in ipairs({"DKP", "SHEETS", "LOG", "AUCTION", "ACTIVITY"}) do
+    StaticPopupDialogs["YTHT_DKP_SYNC_" .. suffix] = {
+        text = "%s",
+        button1 = "接受",
+        button2 = "拒绝",
+        OnAccept = function(self, data)
+            if data and data.apply then
+                data.apply()
+            end
+        end,
+        timeout = 60,
+        whileDead = true,
+        hideOnEscape = true,
+        preferredIndex = 3,
+    }
+end
 
 ----------------------------------------------------------------------
 -- 发送工具
@@ -342,7 +345,7 @@ local function HandleSyncChunk(parts, sender)
         end
 
         if DKP.IsAdminMode() then
-            StaticPopup_Show("YTHT_DKP_SYNC_CONFIRM",
+            StaticPopup_Show("YTHT_DKP_SYNC_DKP",
                 format("收到来自 |cff00FF00%s|r 的 DKP 数据\n(%d 名玩家)\n\n是否覆盖本地数据？",
                     GetShortName(sender), count),
                 nil, { apply = applySync })
@@ -1105,7 +1108,7 @@ local function HandleLogChunk(parts, sender)
         end
 
         if DKP.IsAdminMode() then
-            StaticPopup_Show("YTHT_DKP_SYNC_CONFIRM",
+            StaticPopup_Show("YTHT_DKP_SYNC_LOG",
                 format("收到来自 |cff00FF00%s|r 的操作记录\n(%d 条)\n\n是否覆盖本地数据？",
                     GetShortName(s), #act.log),
                 nil, { apply = applyLog })
@@ -1126,7 +1129,7 @@ local function HandleAuctionHistChunk(parts, sender)
         end
 
         if DKP.IsAdminMode() then
-            StaticPopup_Show("YTHT_DKP_SYNC_CONFIRM",
+            StaticPopup_Show("YTHT_DKP_SYNC_AUCTION",
                 format("收到来自 |cff00FF00%s|r 的拍卖记录\n(%d 条)\n\n是否覆盖本地数据？",
                     GetShortName(s), #act.auctionHistory),
                 nil, { apply = applyHist })
@@ -1188,19 +1191,30 @@ local function HandleActivityChunk(parts, sender)
             local act = DKP.DeserializeActivity(text)
             if act then
                 local senderShort = GetShortName(sender)
-                -- 同步 log（替换）
-                if act.log and #act.log > 0 then
-                    DKP.db.log = act.log
+                local logCount = #(act.log or {})
+                local histCount = #(act.auctionHistory or {})
+
+                local function applyActivity()
+                    if act.log and #act.log > 0 then
+                        DKP.db.log = act.log
+                    end
+                    if act.auctionHistory and #act.auctionHistory > 0 then
+                        DKP.db.auctionHistory = act.auctionHistory
+                    end
+                    DKP.Print("已同步活动数据 (来自 " .. senderShort .. "): " ..
+                        logCount .. " 条日志, " .. histCount .. " 条拍卖")
+                    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                    if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
                 end
-                -- 同步 auctionHistory（替换）
-                if act.auctionHistory and #act.auctionHistory > 0 then
-                    DKP.db.auctionHistory = act.auctionHistory
+
+                if DKP.IsAdminMode() then
+                    StaticPopup_Show("YTHT_DKP_SYNC_ACTIVITY",
+                        format("收到来自 |cff00FF00%s|r 的活动数据\n(%d 条日志, %d 条拍卖)\n\n是否覆盖本地数据？",
+                            senderShort, logCount, histCount),
+                        nil, { apply = applyActivity })
+                else
+                    applyActivity()
                 end
-                DKP.Print("已同步活动数据 (来自 " .. senderShort .. "): " ..
-                    #(act.log or {}) .. " 条日志, " .. #(act.auctionHistory or {}) .. " 条拍卖")
-                if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
-                if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
-            else
             end
         end
     end
@@ -1243,55 +1257,24 @@ local function HandleSheetsChunk(parts, sender)
         if not next(newSheets) then return end
 
         local senderShort = GetShortName(sender)
+        local sheetCount = 0
+        for _ in pairs(newSheets) do sheetCount = sheetCount + 1 end
 
-        -- 合并掉落列表（按 sheetName + encounterID + rollID 去重）
-        for sheetName, newSheet in pairs(newSheets) do
-            if not DKP.db.sheets[sheetName] then
-                DKP.db.sheets[sheetName] = newSheet
-            else
-                local localSheet = DKP.db.sheets[sheetName]
-                for _, newBoss in ipairs(newSheet.bosses or {}) do
-                    -- 查找本地是否已有该 boss
-                    local localBoss = nil
-                    for _, lb in ipairs(localSheet.bosses or {}) do
-                        if lb.encounterID == newBoss.encounterID then
-                            localBoss = lb
-                            break
-                        end
-                    end
-                    if not localBoss then
-                        table.insert(localSheet.bosses, newBoss)
-                    else
-                        -- 合并击杀状态
-                        if newBoss.killed then localBoss.killed = true end
-                        -- 合并 items（按 rollID 去重）
-                        local existingRolls = {}
-                        for _, item in ipairs(localBoss.items or {}) do
-                            existingRolls[item.rollID] = true
-                        end
-                        for _, newItem in ipairs(newBoss.items or {}) do
-                            if not existingRolls[newItem.rollID] then
-                                table.insert(localBoss.items, newItem)
-                            else
-                                -- 更新已有 item 的 winner/dkp（可能对方已分配）
-                                for _, item in ipairs(localBoss.items) do
-                                    if item.rollID == newItem.rollID then
-                                        if (newItem.winner or "") ~= "" and (item.winner or "") == "" then
-                                            item.winner = newItem.winner
-                                            item.winnerClass = newItem.winnerClass
-                                            item.dkp = newItem.dkp
-                                        end
-                                        break
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
+        local function applySheets()
+            -- 完全替换掉落列表（管理员数据为准）
+            DKP.db.sheets = newSheets
+            DKP.Print("已同步掉落列表 (" .. sheetCount .. " 个副本, 来自 " .. senderShort .. ")")
+            if DKP.RefreshTableUI then DKP.RefreshTableUI() end
         end
-        DKP.Print("已同步掉落列表 (来自 " .. senderShort .. ")")
-        if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+
+        if DKP.IsAdminMode() then
+            StaticPopup_Show("YTHT_DKP_SYNC_SHEETS",
+                format("收到来自 |cff00FF00%s|r 的掉落列表\n(%d 个副本)\n\n是否覆盖本地数据？",
+                    senderShort, sheetCount),
+                nil, { apply = applySheets })
+        else
+            applySheets()
+        end
     end
 end
 
@@ -1323,6 +1306,7 @@ local function HandleOptionsChunk(parts, sender)
 
         local newOpts = DeserializeOptions(text)
         if next(newOpts) then
+            -- 完全替换配置（保留未同步的本地字段如 enableChatAuction）
             for k, v in pairs(newOpts) do
                 DKP.db.options[k] = v
             end

@@ -74,6 +74,23 @@ function DKP.GetPlayerByCharacter(charName)
 end
 
 ----------------------------------------------------------------------
+-- 玩家名→角色名（用于日志记录显示）
+----------------------------------------------------------------------
+function DKP.GetDisplayName(playerName)
+    local data = DKP.db and DKP.db.players[playerName]
+    if data and data.characters and #data.characters > 0 then
+        return data.characters[1].name
+    end
+    return playerName
+end
+
+--- 反向：角色名或玩家名→玩家名（用于 DKP 操作）
+function DKP.ResolvePlayerName(name)
+    if DKP.db and DKP.db.players[name] then return name end
+    return DKP.GetPlayerByCharacter(name) or name
+end
+
+----------------------------------------------------------------------
 -- 数据操作
 ----------------------------------------------------------------------
 function DKP.AddPlayer(playerName)
@@ -157,7 +174,7 @@ function DKP.AdjustDKP(playerName, amount, reason)
     DKP.hasUnsavedChanges = true
     table.insert(DKP.db.log, {
         type = amount >= 0 and "award" or "deduct",
-        player = playerName,
+        player = DKP.GetDisplayName(playerName),
         amount = amount,
         reason = reason or "",
         timestamp = time(),
@@ -171,18 +188,23 @@ function DKP.AdjustDKP(playerName, amount, reason)
 end
 
 -- 批量DKP调整（统一amount，写一条批量日志）
-function DKP.BulkAdjustDKPBatch(playerNames, amount, reason)
+-- charNames: 可选，与 playerNames 一一对应的角色名数组
+function DKP.BulkAdjustDKPBatch(playerNames, amount, reason, charNames)
     if not DKP.db or not playerNames or #playerNames == 0 then return 0 end
     local affected = {}
-    for _, name in ipairs(playerNames) do
+    local displayNames = {}
+    for i, name in ipairs(playerNames) do
         if AdjustDKPRaw(name, amount) then
             table.insert(affected, name)
+            -- 优先用传入的角色名，否则自动查找
+            local dn = (charNames and charNames[i]) or DKP.GetDisplayName(name)
+            table.insert(displayNames, dn)
         end
     end
     if #affected > 0 then
         table.insert(DKP.db.log, {
             type = amount >= 0 and "award" or "deduct",
-            players = affected,
+            players = displayNames,
             amount = amount,
             reason = reason or "",
             timestamp = time(),
@@ -210,7 +232,7 @@ function DKP.BulkAdjustDKPDetailed(details, reason)
     local totalAmount = 0
     for _, d in ipairs(details) do
         if AdjustDKPRaw(d.name, d.amount) then
-            table.insert(affected, { name = d.name, amount = d.amount })
+            table.insert(affected, { name = DKP.GetDisplayName(d.name), amount = d.amount })
             totalAmount = totalAmount + d.amount
         end
     end
@@ -237,7 +259,7 @@ function DKP.SetDKP(playerName, amount, reason)
     local logReason = reason or ("从 " .. old .. " 设置为 " .. amount)
     table.insert(DKP.db.log, {
         type = "set",
-        player = playerName,
+        player = DKP.GetDisplayName(playerName),
         amount = amount,
         reason = logReason,
         timestamp = time(),
@@ -1829,9 +1851,14 @@ function DKP.SerializeActivity(activity)
         table.insert(lines, DKP.db.masterAdmin)
     end
 
-    -- PLAYERS
-    local players = activity.players or DKP.db.players or {}
+    -- PLAYERS（只在有数据时序列化，避免同步 log/auction 时带上无关的完整玩家列表）
     table.insert(lines, "[PLAYERS]")
+    local players = activity.players
+    if not players then
+        -- 未显式传入 players 时，不 fallback 到 DKP.db.players
+        -- 归档活动会传入自己的 players，同步 log/auction 时 players 为空表
+        players = {}
+    end
     for name, data in pairs(players) do
         local charParts = {}
         for _, char in ipairs(data.characters or {}) do
@@ -1877,20 +1904,20 @@ function DKP.SerializeActivity(activity)
         }, "§"))
     end
 
-    -- SHEETS
-    local sheets = activity.sheets or {}
+    -- SHEETS（只在有数据时序列化，避免同步 log/auction 时带上无关的完整 sheets）
     table.insert(lines, "[SHEETS]")
-    local sheetsText = DKP.SerializeSheets and DKP.SerializeSheets() or ""
-    -- 如果是归档活动，用活动自己的 sheets
     if activity.sheets and next(activity.sheets) then
-        -- 临时替换序列化
-        local saved = DKP.db.sheets
-        DKP.db.sheets = activity.sheets
-        sheetsText = DKP.SerializeSheets and DKP.SerializeSheets() or ""
-        DKP.db.sheets = saved
-    end
-    if sheetsText ~= "" then
-        table.insert(lines, sheetsText)
+        local sheetsText = ""
+        if DKP.SerializeSheets then
+            -- 临时替换序列化
+            local saved = DKP.db.sheets
+            DKP.db.sheets = activity.sheets
+            sheetsText = DKP.SerializeSheets()
+            DKP.db.sheets = saved
+        end
+        if sheetsText ~= "" then
+            table.insert(lines, sheetsText)
+        end
     end
 
     table.insert(lines, "[END]")
@@ -2629,12 +2656,13 @@ function DKP.ReverseLogEntry(logIndex)
             for _, d in ipairs(entry.players) do
                 local name = type(d) == "table" and d.name or d
                 local amt = type(d) == "table" and d.amount or entry.amount
-                local player = DKP.db.players[name]
+                local resolvedName = DKP.ResolvePlayerName(name)
+                local player = DKP.db.players[resolvedName]
                 if player then
                     player.dkp = (player.dkp or 0) - amt
                     player.lastUpdated = time()
                     if DKP.BroadcastDKPChange then
-                        DKP.BroadcastDKPChange(name, player.dkp, -amt, "冲红: " .. (entry.reason or ""))
+                        DKP.BroadcastDKPChange(resolvedName, player.dkp, -amt, "冲红: " .. (entry.reason or ""))
                     end
                 end
                 table.insert(reversePlayers, type(d) == "table" and { name = d.name, amount = -d.amount } or name)
@@ -2653,12 +2681,13 @@ function DKP.ReverseLogEntry(logIndex)
             local reverseAmount = -entry.amount
             local names = {}
             for _, name in ipairs(entry.players) do
-                local player = DKP.db.players[name]
+                local resolvedName = DKP.ResolvePlayerName(name)
+                local player = DKP.db.players[resolvedName]
                 if player then
                     player.dkp = (player.dkp or 0) + reverseAmount
                     player.lastUpdated = time()
                     if DKP.BroadcastDKPChange then
-                        DKP.BroadcastDKPChange(name, player.dkp, reverseAmount, "冲红: " .. (entry.reason or ""))
+                        DKP.BroadcastDKPChange(resolvedName, player.dkp, reverseAmount, "冲红: " .. (entry.reason or ""))
                     end
                 end
                 table.insert(names, name)
@@ -2677,14 +2706,15 @@ function DKP.ReverseLogEntry(logIndex)
         local count = type(entry.players[1]) == "table" and #entry.players or #entry.players
         DKP.Print("已冲红批量操作: " .. count .. " 人 (" .. (entry.reason or "") .. ")")
     else
-        -- 单人条目冲红（原逻辑）
+        -- 单人条目冲红（用 ResolvePlayerName 回找 DKP 玩家）
         local reverseAmount = -entry.amount
-        local player = DKP.db.players[entry.player]
+        local resolvedName = DKP.ResolvePlayerName(entry.player)
+        local player = DKP.db.players[resolvedName]
         if player then
             player.dkp = (player.dkp or 0) + reverseAmount
             player.lastUpdated = time()
             if DKP.BroadcastDKPChange then
-                DKP.BroadcastDKPChange(entry.player, player.dkp, reverseAmount, "冲红: " .. (entry.reason or ""))
+                DKP.BroadcastDKPChange(resolvedName, player.dkp, reverseAmount, "冲红: " .. (entry.reason or ""))
             end
         end
 
@@ -2986,12 +3016,14 @@ local function ShowRaidAwardDialog()
                 return
             end
             local names = {}
+            local charNames = {}
             for _, row in ipairs(d.memberRows) do
                 if row:IsShown() and row.cb:GetChecked() and row.playerName then
                     table.insert(names, row.playerName)
+                    table.insert(charNames, row.charName or row.playerName)
                 end
             end
-            local count = DKP.BulkAdjustDKPBatch(names, val, reason)
+            local count = DKP.BulkAdjustDKPBatch(names, val, reason, charNames)
             DKP.Print("已为 " .. count .. " 名玩家加 " .. val .. " DKP (" .. reason .. ")")
             DKP.RefreshDKPUI()
             d:Hide()
@@ -3009,12 +3041,14 @@ local function ShowRaidAwardDialog()
                 return
             end
             local names = {}
+            local charNames = {}
             for _, row in ipairs(d.memberRows) do
                 if row:IsShown() and row.cb:GetChecked() and row.playerName then
                     table.insert(names, row.playerName)
+                    table.insert(charNames, row.charName or row.playerName)
                 end
             end
-            local count = DKP.BulkAdjustDKPBatch(names, -val, reason)
+            local count = DKP.BulkAdjustDKPBatch(names, -val, reason, charNames)
             DKP.Print("已为 " .. count .. " 名玩家扣 " .. val .. " DKP (" .. reason .. ")")
             DKP.RefreshDKPUI()
             d:Hide()
@@ -3091,6 +3125,7 @@ local function ShowRaidAwardDialog()
 
                 -- 匹配的DKP玩家
                 row.playerName = m.playerName
+                row.charName = m.shortName
                 row.matched = (m.playerName ~= nil)
 
                 if m.playerName then
