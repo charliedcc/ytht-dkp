@@ -40,6 +40,24 @@ local function IsTrustedSender(sender)
 end
 
 ----------------------------------------------------------------------
+-- 同步确认弹窗（管理员收到同步数据时确认）
+----------------------------------------------------------------------
+StaticPopupDialogs["YTHT_DKP_SYNC_CONFIRM"] = {
+    text = "%s",
+    button1 = "接受",
+    button2 = "拒绝",
+    OnAccept = function(self, data)
+        if data and data.apply then
+            data.apply()
+        end
+    end,
+    timeout = 60,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+----------------------------------------------------------------------
 -- 发送工具
 ----------------------------------------------------------------------
 local function GetChannel()
@@ -169,7 +187,7 @@ local CHUNK_BURST_LIMIT = 8      -- 保守用8（留2条余量给其他消息）
 local CHUNK_BURST_INTERVAL = 0.1  -- 突发期间隔
 local CHUNK_SLOW_INTERVAL = 1.1   -- 突发后间隔（等恢复）
 
-local function SendChunked(prefix, msgType, data, channel, target)
+local function SendChunked(prefix, msgType, data, channel, target, onComplete)
     -- 动态计算 chunk 大小，确保总消息 <= 255 字节
     local headerReserve = #msgType + 12
     local chunkSize = 255 - headerReserve
@@ -178,9 +196,6 @@ local function SendChunked(prefix, msgType, data, channel, target)
     local totalLen = #data
     local numChunks = math.ceil(totalLen / chunkSize)
     if numChunks == 0 then numChunks = 1 end
-
-    -- 超过5个chunk时显示发送进度
-    local showProgress = numChunks > 5
 
     for i = 1, numChunks do
         -- 计算延迟: 前 BURST_LIMIT 条快速发，之后慢速
@@ -202,10 +217,25 @@ local function SendChunked(prefix, msgType, data, channel, target)
             else
                 C_ChatInfo.SendAddonMessage(prefix, msg, channel or "RAID")
             end
-            if showProgress and (i % 5 == 0 or i == numChunks) then
+            if i == numChunks and onComplete then
+                -- 等消息队列恢复再启动下一批
+                C_Timer.After(1.5, onComplete)
             end
         end)
     end
+end
+
+----------------------------------------------------------------------
+-- 串行发送队列：上一批发完再发下一批
+----------------------------------------------------------------------
+local function RunSendChain(steps)
+    local function runNext(idx)
+        if idx > #steps then return end
+        steps[idx](function()
+            runNext(idx + 1)
+        end)
+    end
+    runNext(1)
 end
 
 ----------------------------------------------------------------------
@@ -213,23 +243,46 @@ end
 ----------------------------------------------------------------------
 local function HandleSyncRequest(sender)
     if not DKP.IsOfficer() then return end
-    local data = SerializePlayers()
-    if data ~= "" then
-        SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", data, nil, sender)
-    end
-    -- 同时发送 options 和 admin 列表
-    local optsData = SerializeOptions()
-    if optsData ~= "" then
-        SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, nil, sender)
-    end
-    -- 发送 sheets
-    if DKP.SerializeSheets then
-        local sheetsData = DKP.SerializeSheets()
-        if sheetsData ~= "" then
-            SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, nil, sender)
-        end
-    end
-    DKP.BroadcastAdminSync()
+
+    RunSendChain({
+        -- 1. 权限
+        function(done)
+            DKP.BroadcastAdminSync()
+            -- TEAM_SYNC 通常很小（1-2 chunk），等 0.5s 再继续
+            C_Timer.After(0.5, done)
+        end,
+        -- 2. DKP 数据
+        function(done)
+            local data = SerializePlayers()
+            if data ~= "" then
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", data, nil, sender, done)
+            else
+                done()
+            end
+        end,
+        -- 3. Options
+        function(done)
+            local optsData = SerializeOptions()
+            if optsData ~= "" then
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, nil, sender, done)
+            else
+                done()
+            end
+        end,
+        -- 4. Sheets
+        function(done)
+            if DKP.SerializeSheets then
+                local sheetsData = DKP.SerializeSheets()
+                if sheetsData ~= "" then
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, nil, sender, done)
+                else
+                    done()
+                end
+            else
+                done()
+            end
+        end,
+    })
 end
 
 ----------------------------------------------------------------------
@@ -267,34 +320,34 @@ local function HandleSyncChunk(parts, sender)
 
         -- 应用同步数据
         local playersData = DeserializePlayers(text)
-        if next(playersData) then
+        if not next(playersData) then return end
+
+        local count = 0
+        for _ in pairs(playersData) do count = count + 1 end
+
+        local function applySync()
+            -- 完全替换玩家列表（管理员数据为准）
+            local newPlayers = {}
             for name, data in pairs(playersData) do
-                if not DKP.db.players[name] then
-                    DKP.db.players[name] = {
-                        dkp = data.dkp,
-                        characters = data.characters,
-                        note = "",
-                        lastUpdated = time(),
-                    }
-                else
-                    DKP.db.players[name].dkp = data.dkp
-                    -- 合并角色列表
-                    local existing = {}
-                    for _, c in ipairs(DKP.db.players[name].characters or {}) do
-                        existing[c.name] = true
-                    end
-                    for _, c in ipairs(data.characters) do
-                        if not existing[c.name] then
-                            table.insert(DKP.db.players[name].characters, c)
-                        end
-                    end
-                    DKP.db.players[name].lastUpdated = time()
-                end
+                newPlayers[name] = {
+                    dkp = data.dkp,
+                    characters = data.characters,
+                    lastUpdated = time(),
+                }
             end
-            -- 重建角色名→玩家名映射（否则新同步的角色无法出价）
+            DKP.db.players = newPlayers
             if DKP.RebuildCharLookup then DKP.RebuildCharLookup() end
-            DKP.Print("已从 " .. GetShortName(sender) .. " 同步 DKP 数据")
+            DKP.Print("已从 " .. GetShortName(sender) .. " 同步 DKP 数据 (" .. count .. " 名玩家)")
             if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+        end
+
+        if DKP.IsAdminMode() then
+            StaticPopup_Show("YTHT_DKP_SYNC_CONFIRM",
+                format("收到来自 |cff00FF00%s|r 的 DKP 数据\n(%d 名玩家)\n\n是否覆盖本地数据？",
+                    GetShortName(sender), count),
+                nil, { apply = applySync })
+        else
+            applySync()
         end
     end
 end
@@ -824,29 +877,97 @@ end
 ----------------------------------------------------------------------
 function DKP.BroadcastFullSync()
     if not DKP.IsOfficer() then return end
-    if not GetChannel() then
+    local channel = GetChannel()
+    if not channel then
         DKP.Print("不在队伍中，无法广播")
         return
     end
 
+    DKP.Print("开始全量同步...")
 
-    -- 第1批: 权限
-    DKP.BroadcastAdminSync()
-
-    -- 第2批: DKP数据（延迟1秒）
-    C_Timer.After(1, function() DKP.BroadcastDKPData() end)
-
-    -- 第3批: 配置（延迟3秒）
-    C_Timer.After(3, function() DKP.BroadcastOptions() end)
-
-    -- 第4批: 掉落列表（延迟5秒）
-    C_Timer.After(5, function() DKP.BroadcastSheetsData() end)
-
-    -- 第5批: 操作记录（延迟30秒）
-    C_Timer.After(30, function() DKP.BroadcastLogData() end)
-
-    -- 第6批: 拍卖记录（延迟45秒）
-    C_Timer.After(45, function() DKP.BroadcastAuctionHistoryData() end)
+    RunSendChain({
+        -- 1. 权限
+        function(done)
+            DKP.BroadcastAdminSync()
+            C_Timer.After(0.5, done)
+        end,
+        -- 2. DKP 数据
+        function(done)
+            local data = SerializePlayers()
+            if data ~= "" then
+                DKP.Print("正在同步 DKP 数据...")
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", data, channel, nil, done)
+            else
+                done()
+            end
+        end,
+        -- 3. Options
+        function(done)
+            local optsData = SerializeOptions()
+            if optsData ~= "" then
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, channel, nil, done)
+            else
+                done()
+            end
+        end,
+        -- 4. 掉落列表
+        function(done)
+            if DKP.SerializeSheets then
+                local sheetsData = DKP.SerializeSheets()
+                if sheetsData ~= "" then
+                    DKP.Print("正在同步掉落列表...")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, channel, nil, done)
+                else
+                    done()
+                end
+            else
+                done()
+            end
+        end,
+        -- 5. 操作记录
+        function(done)
+            if DKP.SerializeActivity then
+                local act = {
+                    name = "sync_log", startTime = 0, endTime = time(),
+                    log = DKP.db.log or {}, auctionHistory = {},
+                    sheets = {}, players = {},
+                }
+                local data = DKP.SerializeActivity(act)
+                if data ~= "" then
+                    DKP.Print("正在同步操作记录...")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel, nil, done)
+                else
+                    done()
+                end
+            else
+                done()
+            end
+        end,
+        -- 6. 拍卖记录
+        function(done)
+            if DKP.SerializeActivity then
+                local act = {
+                    name = "sync_history", startTime = 0, endTime = time(),
+                    log = {}, auctionHistory = DKP.db.auctionHistory or {},
+                    sheets = {}, players = {},
+                }
+                local data = DKP.SerializeActivity(act)
+                if data ~= "" then
+                    DKP.Print("正在同步拍卖记录...")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_AUCTION_HISTORY", data, channel, nil, done)
+                else
+                    done()
+                end
+            else
+                done()
+            end
+        end,
+        -- 完成
+        function(done)
+            DKP.Print("|cff00FF00全量同步完成|r")
+            done()
+        end,
+    })
 end
 
 ----------------------------------------------------------------------
@@ -975,20 +1096,42 @@ end
 
 local function HandleLogChunk(parts, sender)
     HandleActivityFormatChunk(parts, sender, pendingLogSync, sender .. "_log", "操作记录", function(act, s)
-        if act.log and #act.log > 0 then
+        if not act.log or #act.log == 0 then return end
+
+        local function applyLog()
             DKP.db.log = act.log
             DKP.Print("已同步操作记录 (" .. #act.log .. " 条, 来自 " .. GetShortName(s) .. ")")
             if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+        end
+
+        if DKP.IsAdminMode() then
+            StaticPopup_Show("YTHT_DKP_SYNC_CONFIRM",
+                format("收到来自 |cff00FF00%s|r 的操作记录\n(%d 条)\n\n是否覆盖本地数据？",
+                    GetShortName(s), #act.log),
+                nil, { apply = applyLog })
+        else
+            applyLog()
         end
     end)
 end
 
 local function HandleAuctionHistChunk(parts, sender)
     HandleActivityFormatChunk(parts, sender, pendingAuctionHistSync, sender .. "_ahist", "拍卖记录", function(act, s)
-        if act.auctionHistory and #act.auctionHistory > 0 then
+        if not act.auctionHistory or #act.auctionHistory == 0 then return end
+
+        local function applyHist()
             DKP.db.auctionHistory = act.auctionHistory
             DKP.Print("已同步拍卖记录 (" .. #act.auctionHistory .. " 条, 来自 " .. GetShortName(s) .. ")")
             if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
+        end
+
+        if DKP.IsAdminMode() then
+            StaticPopup_Show("YTHT_DKP_SYNC_CONFIRM",
+                format("收到来自 |cff00FF00%s|r 的拍卖记录\n(%d 条)\n\n是否覆盖本地数据？",
+                    GetShortName(s), #act.auctionHistory),
+                nil, { apply = applyHist })
+        else
+            applyHist()
         end
     end)
 end
@@ -1252,6 +1395,13 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "GROUP_ROSTER_UPDATE" then
         if IsInRaid() or IsInGroup() then
             if DKP.IsOfficer() then
+                -- 管理员自动切换到管理模式
+                if DKP.db and DKP.db.mode ~= "admin" then
+                    DKP.db.mode = "admin"
+                    DKP.Print("|cff00FF00检测到管理员身份，已自动切换到管理模式|r")
+                    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                    if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+                end
                 -- 管理员进团后广播 admin 列表
                 C_Timer.After(3, function()
                     if DKP.IsOfficer() then

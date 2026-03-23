@@ -1820,6 +1820,12 @@ function DKP.OnInitialized()
         -- 同步快捷引用
         DKP.db.admins = team.admins
         DKP.db.masterAdmin = team.masterAdmin
+
+        -- 管理员自动切换到管理模式
+        if DKP.db.mode ~= "admin" and team.admins[DKP.playerName] then
+            DKP.db.mode = "admin"
+            DKP.Print("|cff00FF00检测到管理员身份，已自动切换到管理模式|r")
+        end
     end
 
     -- 创建主框架
