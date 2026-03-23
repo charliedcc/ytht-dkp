@@ -224,7 +224,7 @@ local function CreateAuctionRow(parent, index)
     local allIn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     allIn:SetSize(42, 20)
     allIn:SetPoint("LEFT", plus5, "RIGHT", 2, 0)
-    allIn:SetText("梭哈")
+    allIn:SetText("SH")
     row.allIn = allIn
 
     -- 提前结束按钮（officer only）
@@ -274,7 +274,7 @@ local function SetAuctionRowData(row, auction)
         for _, tb in ipairs(auction.tiedBidders) do
             table.insert(names, tb.name)
         end
-        bidText = "|cffFF4444梭哈平局!|r " .. table.concat(names, " vs ") ..
+        bidText = "|cffFF4444sh平局!|r " .. table.concat(names, " vs ") ..
             " @ |cffFFD700" .. auction.currentBid .. "|r DKP"
     elseif auction.currentBid > 0 and auction.currentBidder then
         local bidderClass = "WARRIOR"
@@ -289,7 +289,7 @@ local function SetAuctionRowData(row, auction)
                 end
             end
         end
-        local allInTag = auction.currentBidIsAllIn and " |cffFF8800[梭哈]|r" or ""
+        local allInTag = auction.currentBidIsAllIn and " |cffFF8800[sh]|r" or ""
         bidText = "当前: |cffFFD700" .. auction.currentBid .. "|r DKP  by " ..
             DKP.ClassColorText(auction.currentBidder, bidderClass) .. allInTag
     else
@@ -473,7 +473,7 @@ function DKP.UpdateAuctionTimers()
                 for _, tb in ipairs(auction.tiedBidders) do
                     table.insert(names, tb.name)
                 end
-                row.bidInfo:SetText("|cffFF4444梭哈平局!|r " .. table.concat(names, " vs ") ..
+                row.bidInfo:SetText("|cffFF4444sh平局!|r " .. table.concat(names, " vs ") ..
                     " @ |cffFFD700" .. auction.currentBid .. "|r DKP")
             elseif auction.currentBid > 0 and auction.currentBidder then
                 local bidderClass = "WARRIOR"
@@ -488,7 +488,7 @@ function DKP.UpdateAuctionTimers()
                         end
                     end
                 end
-                local allInTag = auction.currentBidIsAllIn and " |cffFF8800[梭哈]|r" or ""
+                local allInTag = auction.currentBidIsAllIn and " |cffFF8800[sh]|r" or ""
                 row.bidInfo:SetText("当前: |cffFFD700" .. auction.currentBid .. "|r DKP  by " ..
                     DKP.ClassColorText(auction.currentBidder, bidderClass) .. allInTag)
             end

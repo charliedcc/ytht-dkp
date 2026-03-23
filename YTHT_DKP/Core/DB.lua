@@ -7,7 +7,7 @@ YTHT_DKP = YTHT_DKP or {}
 local DKP = YTHT_DKP
 
 -- 版本
-DKP.version = "1.0.0"
+DKP.version = "1.0.1"
 DKP.addonName = "YTHT_DKP"
 
 -- 插件通信前缀
@@ -331,9 +331,12 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
             local point, _, relPoint, x, y = DKP.MainFrame:GetPoint()
             DKP.db.point = { point, "UIParent", relPoint, x, y }
         end
-        -- 保存当前团队的 currentSheet
+        -- 同步快捷引用回团队（防止归档等操作断开引用后数据丢失）
         local team = DKP.GetCurrentTeam()
         if team then
+            team.log = DKP.db.log
+            team.auctionHistory = DKP.db.auctionHistory
+            team.sheets = DKP.db.sheets
             team.currentSheet = DKP.db.currentSheet
         end
     end

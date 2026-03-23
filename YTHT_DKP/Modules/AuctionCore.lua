@@ -407,7 +407,7 @@ function DKP.EndAuction(auctionID)
             )
         end
 
-        DKP.Print(auction.itemLink .. " 梭哈平局! 转人工处理")
+        DKP.Print(auction.itemLink .. " sh平局! 转人工处理")
 
         -- 广播历史记录
         if DKP.BroadcastHistoryEntry then

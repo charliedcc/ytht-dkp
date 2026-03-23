@@ -24,6 +24,7 @@ local STATE_COLORS = {
     TIE = { r = 1.0, g = 0.3, b = 0.3 },
     ACTIVE = { r = 1.0, g = 1.0, b = 0.0 },
     REVOKED = { r = 1.0, g = 0.5, b = 0.0 },
+    CHAT_PENDING = { r = 1.0, g = 0.8, b = 0.0 },
 }
 local STATE_LABELS = {
     ENDED = "已结束",
@@ -32,6 +33,7 @@ local STATE_LABELS = {
     TIE = "平局",
     ACTIVE = "进行中",
     REVOKED = "已撤销",
+    CHAT_PENDING = "待确认",
 }
 
 -- 缓存
@@ -136,10 +138,27 @@ function DKP.InitAuctionLogPanel()
     rightTitle:SetText("竞价详情")
     rightTitle:SetTextColor(0.6, 0.6, 0.6)
 
+    -- 底部按钮区
+    -- 分享到聊天按钮
+    local shareBtn = CreateFrame("Button", nil, rightFrame, "UIPanelButtonTemplate")
+    shareBtn:SetSize(80, 22)
+    shareBtn:SetPoint("BOTTOMLEFT", rightFrame, "BOTTOMLEFT", 4, 6)
+    shareBtn:SetText("分享到聊天")
+    shareBtn:Hide()
+    parent.shareBtn = shareBtn
+
+    -- 确认扣分按钮（聊天竞拍待确认时显示）
+    local chatConfirmBtn = CreateFrame("Button", nil, rightFrame, "UIPanelButtonTemplate")
+    chatConfirmBtn:SetSize(100, 22)
+    chatConfirmBtn:SetPoint("BOTTOMRIGHT", rightFrame, "BOTTOMRIGHT", -4, 6)
+    chatConfirmBtn:SetText("确认扣分")
+    chatConfirmBtn:Hide()
+    parent.chatConfirmBtn = chatConfirmBtn
+
     -- 右侧内容滚动区
     local rightScroll = CreateFrame("ScrollFrame", "YTHTDKPAuctionLogRightScroll", rightFrame, "UIPanelScrollFrameTemplate")
     rightScroll:SetPoint("TOPLEFT", 4, -20)
-    rightScroll:SetPoint("BOTTOMRIGHT", -24, 4)
+    rightScroll:SetPoint("BOTTOMRIGHT", -24, 32)
 
     local rightChild = CreateFrame("Frame", "YTHTDKPAuctionLogRightChild", rightScroll)
     rightChild:SetWidth(rightScroll:GetWidth())
@@ -392,12 +411,66 @@ function RefreshDetailPanel()
 
     if not selectedEntry then
         if parent.detailEmpty then parent.detailEmpty:Show() end
+        if parent.chatConfirmBtn then parent.chatConfirmBtn:Hide() end
+        if parent.shareBtn then parent.shareBtn:Hide() end
         rightChild:SetHeight(1)
         return
     end
     if parent.detailEmpty then parent.detailEmpty:Hide() end
 
     local entry = selectedEntry
+
+    -- 聊天竞拍确认按钮
+    if parent.chatConfirmBtn then
+        if entry.state == "CHAT_PENDING" and entry.isChatAuction and entry.winner then
+            parent.chatConfirmBtn:SetText("确认扣分 (" .. (entry.winnerChar or entry.winner) .. " -" .. entry.finalBid .. ")")
+            parent.chatConfirmBtn:SetScript("OnClick", function()
+                if DKP.ConfirmChatAuctionEntry then
+                    DKP.ConfirmChatAuctionEntry(entry)
+                end
+            end)
+            parent.chatConfirmBtn:Show()
+        else
+            parent.chatConfirmBtn:Hide()
+        end
+    end
+
+    -- 分享到聊天按钮
+    if parent.shareBtn then
+        parent.shareBtn:SetScript("OnClick", function()
+            local ch = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+            if not ch then
+                DKP.Print("不在团队或小队中，无法分享")
+                return
+            end
+            -- 构建分享内容
+            local itemName = entry.itemLink or "物品"
+            local st = STATE_LABELS[entry.state] or entry.state or ""
+            SendChatMessage("=== 拍卖记录: " .. itemName .. " (" .. st .. ") ===", ch)
+            -- 获胜者
+            if entry.winner and entry.winner ~= "" then
+                SendChatMessage("获胜: " .. (entry.winnerChar or entry.winner) .. " " .. (entry.finalBid or 0) .. " DKP", ch)
+            elseif entry.state == "TIE" and entry.tiedBidders then
+                local names = {}
+                for _, tb in ipairs(entry.tiedBidders) do
+                    table.insert(names, tb.name or tb.playerName or "?")
+                end
+                SendChatMessage("并列: " .. table.concat(names, " vs ") .. " @ " .. (entry.finalBid or 0) .. " DKP", ch)
+            end
+            -- 逐条竞价
+            if entry.bids and #entry.bids > 0 then
+                for i, bid in ipairs(entry.bids) do
+                    local bidder = bid.bidder or bid.bidderPlayer or "?"
+                    local allIn = bid.isAllIn and " [sh]" or ""
+                    local pass = (bid.bidType == "pass") and " [pass]" or ""
+                    local raw = bid.rawMessage and (" \"" .. bid.rawMessage .. "\"") or ""
+                    SendChatMessage(i .. ". " .. bidder .. " " .. (bid.amount or 0) .. " DKP" .. allIn .. pass .. raw, ch)
+                end
+            end
+        end)
+        parent.shareBtn:Show()
+    end
+
     local yOffset = 0
 
     -- 辅助: 创建或复用字体串
@@ -520,7 +593,7 @@ function RefreshDetailPanel()
 
             local allInTag = ""
             if bid.isAllIn then
-                allInTag = " |cffFF8800[梭哈]|r"
+                allInTag = " |cffFF8800[sh=" .. (bid.amount or 0) .. "]|r"
             end
 
             local timeStr = ""
@@ -529,9 +602,17 @@ function RefreshDetailPanel()
             end
 
             local bidderName = bid.bidder or bid.bidderPlayer or "?"
+            local passTag = ""
+            if bid.bidType == "pass" then
+                passTag = " |cff888888[pass]|r"
+            end
+            local rawTag = ""
+            if bid.rawMessage and entry.isChatAuction then
+                rawTag = "  |cff666666\"" .. bid.rawMessage .. "\"|r"
+            end
             fs:SetText(i .. ". " .. bidderName .. "  " ..
                 "|cffFFD700" .. (bid.amount or 0) .. "|r DKP" ..
-                allInTag .. "  |cff666666" .. timeStr .. "|r")
+                allInTag .. passTag .. "  |cff666666" .. timeStr .. "|r" .. rawTag)
             fs:SetTextColor(0.8, 0.8, 0.8)
             yOffset = yOffset - 15
         end

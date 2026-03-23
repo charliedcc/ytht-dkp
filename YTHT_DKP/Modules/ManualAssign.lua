@@ -14,7 +14,7 @@ local assignDialog = nil
 ----------------------------------------------------------------------
 local function CreateAssignDialog()
     local d = CreateFrame("Frame", "YTHTDKPManualAssignDialog", UIParent, "BackdropTemplate")
-    d:SetSize(520, 460)
+    d:SetSize(600, 460)
     d:SetPoint("CENTER")
     d:SetFrameStrata("DIALOG")
     d:SetFrameLevel(210)
@@ -58,7 +58,7 @@ local function CreateAssignDialog()
 
     local itemNameText = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     itemNameText:SetPoint("LEFT", itemIcon, "RIGHT", 8, 0)
-    itemNameText:SetWidth(280)
+    itemNameText:SetWidth(360)
     itemNameText:SetJustifyH("LEFT")
     itemNameText:SetWordWrap(false)
     d.itemNameText = itemNameText
@@ -66,7 +66,7 @@ local function CreateAssignDialog()
     -- 平局信息
     local tieInfoText = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     tieInfoText:SetPoint("TOPLEFT", 16, -72)
-    tieInfoText:SetWidth(328)
+    tieInfoText:SetWidth(408)
     tieInfoText:SetJustifyH("LEFT")
     tieInfoText:SetTextColor(1, 0.5, 0)
     d.tieInfoText = tieInfoText
@@ -208,7 +208,7 @@ local function RefreshPlayerList(dialog, filter)
 
     -- 多列布局
     local ROW_HEIGHT = 20
-    local COL_WIDTH = 155
+    local COL_WIDTH = 180
     local NUM_COLS = 3
     local COL_SPACING = 4
 

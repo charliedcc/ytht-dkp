@@ -302,6 +302,15 @@ local function CreateMainFrame()
     end)
     f.activityBtn = activityBtn
 
+    local settingsBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    settingsBtn:SetSize(44, 20)
+    settingsBtn:SetPoint("RIGHT", activityBtn, "LEFT", -4, 0)
+    settingsBtn:SetText("设置")
+    settingsBtn:SetScript("OnClick", function()
+        if DKP.ShowSettingsDialog then DKP.ShowSettingsDialog() end
+    end)
+    f.settingsBtn = settingsBtn
+
     -- 关闭按钮
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
@@ -400,6 +409,17 @@ local function CreateMainFrame()
         if DKP.BroadcastSheetsData then DKP.BroadcastSheetsData() end
     end)
     f.syncLootBtn = syncLootBtn
+
+    -- 聊天竞拍面板按钮（有竞拍进行时显示）
+    local chatAucPanelBtn = CreateFrame("Button", nil, lootContent, "UIPanelButtonTemplate")
+    chatAucPanelBtn:SetSize(72, 18)
+    chatAucPanelBtn:SetPoint("RIGHT", syncLootBtn, "LEFT", -4, 0)
+    chatAucPanelBtn:SetText("竞拍面板")
+    chatAucPanelBtn:SetScript("OnClick", function()
+        if DKP.ShowChatAuctionPanel then DKP.ShowChatAuctionPanel() end
+    end)
+    chatAucPanelBtn:Hide()
+    f.chatAucPanelBtn = chatAucPanelBtn
 
     -- 滚动区域
     local scrollFrame = CreateFrame("ScrollFrame", "YTHTDKPScrollFrame", lootContent, "UIPanelScrollFrameTemplate")
@@ -540,6 +560,14 @@ local function CreateItemRow(parent, itemIndex, yOffset)
     manualBtn:Hide()
     row.manualBtn = manualBtn
 
+    -- 聊天拍按钮
+    local chatAucBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    chatAucBtn:SetSize(50, 18)
+    chatAucBtn:SetPoint("LEFT", manualBtn, "RIGHT", 4, 0)
+    chatAucBtn:SetText("聊天拍")
+    chatAucBtn:Hide()
+    row.chatAucBtn = chatAucBtn
+
     -- 删除按钮
     local delItemBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     delItemBtn:SetSize(20, 18)
@@ -593,6 +621,7 @@ local function SetItemRowData(row, itemData)
         row.itemLink = nil
         row.auctionBtn:Hide()
         row.manualBtn:Hide()
+        if row.chatAucBtn then row.chatAucBtn:Hide() end
         row.statusText:Hide()
         if row.delItemBtn then row.delItemBtn:Hide() end
         row:Hide()
@@ -620,6 +649,7 @@ local function SetItemRowData(row, itemData)
     -- 默认隐藏所有按钮和状态
     row.auctionBtn:Hide()
     row.manualBtn:Hide()
+    if row.chatAucBtn then row.chatAucBtn:Hide() end
     row.statusText:Hide()
 
     local isOfficer = (DKP.IsAdminMode and DKP.IsAdminMode()) and (DKP.IsOfficer and DKP.IsOfficer())
@@ -743,6 +773,14 @@ local function SetItemRowData(row, itemData)
                     DKP.ShowManualAssignDialog(itemData.link, itemData, row.bossData)
                 end
             end)
+            if row.chatAucBtn then
+                row.chatAucBtn:Show()
+                row.chatAucBtn:SetScript("OnClick", function()
+                    if DKP.StartChatAuction then
+                        DKP.StartChatAuction(itemData.link, itemData, row.bossData)
+                    end
+                end)
+            end
         end
     end
 
@@ -777,6 +815,11 @@ end
 function DKP.RefreshTableUI()
     local f = DKP.MainFrame
     if not f or not f:IsShown() then return end
+
+    -- 聊天竞拍面板按钮显隐
+    if f.chatAucPanelBtn then
+        f.chatAucPanelBtn:SetShown(DKP.HasActiveChatAuction and DKP.HasActiveChatAuction())
+    end
 
     -- 收集所有 sheets
     local hasAnySheet = false
@@ -1332,10 +1375,18 @@ function DKP.ArchiveActivity(activityName)
     table.insert(DKP.db.activities, activity)
 
     -- 清空当前工作数据（DKP值保留）
+    -- 必须同时更新团队引用，否则 /reload 后 SwitchTeam 会覆盖回旧数据
     DKP.db.log = {}
     DKP.db.auctionHistory = {}
     DKP.db.sheets = {}
     DKP.db.currentSheet = nil
+    local team = DKP.GetCurrentTeam()
+    if team then
+        team.log = DKP.db.log
+        team.auctionHistory = DKP.db.auctionHistory
+        team.sheets = DKP.db.sheets
+        team.currentSheet = nil
+    end
 
     -- 重置 session
     DKP.db.session.active = false
@@ -1638,6 +1689,13 @@ function DKP.ShowActivityHistory()
                     DKP.db.auctionHistory = act.auctionHistory or {}
                     DKP.db.sheets = act.sheets or {}
                     DKP.db.currentSheet = act.currentSheet
+                    local team = DKP.GetCurrentTeam()
+                    if team then
+                        team.log = DKP.db.log
+                        team.auctionHistory = DKP.db.auctionHistory
+                        team.sheets = DKP.db.sheets
+                        team.currentSheet = DKP.db.currentSheet
+                    end
                     DKP.hasUnsavedChanges = true
                     DKP.Print("已恢复活动: " .. (act.name or ""))
                     d:Hide()
@@ -2105,12 +2163,27 @@ function DKP.OnInitialized()
                 DKP.Print("已重置所有拍卖和session状态")
                 if DKP.RefreshAuctionUI then DKP.RefreshAuctionUI() end
 
+            elseif arg1 == "chatauction" then
+                if arg2 == "on" then
+                    DKP.db.options.enableChatAuction = true
+                    DKP.Print("聊天自动竞拍: |cff00FF00已启用|r")
+                elseif arg2 == "off" then
+                    DKP.db.options.enableChatAuction = false
+                    DKP.Print("聊天自动竞拍: |cffFF4444已禁用|r")
+                else
+                    local status = (DKP.db.options.enableChatAuction ~= false) and "|cff00FF00启用|r" or "|cffFF4444禁用|r"
+                    DKP.Print("聊天自动竞拍: " .. status)
+                    DKP.Print("  /ytht debug chatauction on  - 启用")
+                    DKP.Print("  /ytht debug chatauction off - 禁用")
+                end
+
             else
                 DKP.Print("调试命令:")
                 DKP.Print("  /ytht debug additem    - 背包装备添加到掉落列表")
                 DKP.Print("  /ytht debug auction [链接] - 直接发起测试拍卖")
                 DKP.Print("  /ytht debug fakeraid   - 添加自己到DKP名单")
                 DKP.Print("  /ytht debug reset      - 重置拍卖/session状态")
+                DKP.Print("  /ytht debug chatauction - 聊天自动竞拍开关")
             end
 
         elseif cmd == "mode" then

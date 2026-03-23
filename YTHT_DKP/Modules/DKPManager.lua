@@ -29,9 +29,9 @@ local DKP_LIST_COLS = 2        -- 两列显示
 local DKP_COL_SPACING = 6
 -- 单列内布局
 local COL_NAME_WIDTH = 100
-local COL_CHARS_WIDTH = 180
+local COL_CHARS_WIDTH = 200
 local COL_DKP_WIDTH = 50
-local COL_OPS_WIDTH = 60
+local COL_OPS_WIDTH = 40
 local PADDING = 10
 local CONTENT_WIDTH = 820 - PADDING * 2 - 24
 
@@ -188,6 +188,16 @@ function DKP.BulkAdjustDKPBatch(playerNames, amount, reason)
             timestamp = time(),
             officer = DKP.playerName or "Unknown",
         })
+        -- 团队频道通报
+        local ch = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+        if ch then
+            local sign = amount >= 0 and "+" or ""
+            local msg = "[DKP] " .. #affected .. "人 " .. sign .. amount .. " DKP"
+            if reason and reason ~= "" then
+                msg = msg .. " (" .. reason .. ")"
+            end
+            SendChatMessage(msg, ch)
+        end
     end
     return #affected
 end
@@ -865,6 +875,32 @@ local function ShowEditPlayerDialog(playerName)
             end
         end)
 
+        -- === 删除玩家 ===
+        local delPlayerBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+        delPlayerBtn:SetSize(80, 22)
+        delPlayerBtn:SetPoint("BOTTOMLEFT", 16, 12)
+        delPlayerBtn:SetText("|cffFF4444删除玩家|r")
+        delPlayerBtn:SetScript("OnClick", function()
+            if not editingPlayerName then return end
+            local name = editingPlayerName
+            StaticPopupDialogs["YTHT_DKP_DELETE_PLAYER"] = {
+                text = "确定要删除玩家 " .. name .. " 吗？\n此操作不可撤销。",
+                button1 = "确定",
+                button2 = "取消",
+                OnAccept = function()
+                    DKP.RemovePlayer(name)
+                    d:Hide()
+                    DKP.RefreshDKPUI()
+                end,
+                timeout = 0,
+                whileDead = true,
+                hideOnEscape = true,
+            }
+            local popup = StaticPopup_Show("YTHT_DKP_DELETE_PLAYER")
+            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
+        end)
+        d.delPlayerBtn = delPlayerBtn
+
         editPlayerDialog = d
     end
 
@@ -1452,9 +1488,9 @@ end
 ----------------------------------------------------------------------
 local settingsDialog
 
-local function ShowSettingsDialog()
+function DKP.ShowSettingsDialog()
     if not settingsDialog then
-        local d = CreateDialogFrame("YTHTDKPSettingsDialog", 400, 460, "管理设置")
+        local d = CreateDialogFrame("YTHTDKPSettingsDialog", 400, 488, "管理设置")
 
         local y = -40
         local function AddOption(label, key, suffix)
@@ -1489,6 +1525,17 @@ local function ShowSettingsDialog()
         bossToggleLabel:SetText("启用Boss击杀自动加分")
         bossToggleLabel:SetTextColor(0.8, 0.8, 0.8)
         d.bossToggle = bossToggle
+        y = y - 28
+
+        -- 聊天竞拍自动触发开关
+        local chatAucToggle = CreateFrame("CheckButton", nil, d, "UICheckButtonTemplate")
+        chatAucToggle:SetSize(24, 24)
+        chatAucToggle:SetPoint("TOPLEFT", 20, y)
+        local chatAucToggleLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        chatAucToggleLabel:SetPoint("LEFT", chatAucToggle, "RIGHT", 2, 0)
+        chatAucToggleLabel:SetText("聊天发装备自动触发竞拍")
+        chatAucToggleLabel:SetTextColor(0.8, 0.8, 0.8)
+        d.chatAucToggle = chatAucToggle
         y = y - 28
 
         d.durationBox = AddOption("拍卖时长", "auctionDuration", "秒")
@@ -1619,6 +1666,7 @@ local function ShowSettingsDialog()
     d.dismissBox:SetText(tostring(opts.dismissPoints or 2))
     d.bossKillBox:SetText(tostring(opts.bossKillPoints or 5))
     d.bossToggle:SetChecked(opts.enableBossKillBonus ~= false)
+    d.chatAucToggle:SetChecked(opts.enableChatAuction ~= false)
     d.durationBox:SetText(tostring(opts.auctionDuration or 300))
     d.minBidBox:SetText(tostring(opts.minBidIncrement or 1))
     d.extendBox:SetText(tostring(opts.auctionExtendTime or 10))
@@ -1705,6 +1753,7 @@ local function ShowSettingsDialog()
         opts.dismissPoints = tonumber(d.dismissBox:GetText()) or opts.dismissPoints
         opts.bossKillPoints = tonumber(d.bossKillBox:GetText()) or opts.bossKillPoints
         opts.enableBossKillBonus = d.bossToggle:GetChecked()
+        opts.enableChatAuction = d.chatAucToggle:GetChecked()
         opts.auctionDuration = tonumber(d.durationBox:GetText()) or opts.auctionDuration
         opts.minBidIncrement = tonumber(d.minBidBox:GetText()) or opts.minBidIncrement
         opts.auctionExtendTime = tonumber(d.extendBox:GetText()) or opts.auctionExtendTime
@@ -2936,13 +2985,13 @@ local function ShowRaidAwardDialog()
                 DKP.Print("请输入有效的正数分值")
                 return
             end
-            local count = 0
+            local names = {}
             for _, row in ipairs(d.memberRows) do
                 if row:IsShown() and row.cb:GetChecked() and row.playerName then
-                    DKP.AdjustDKP(row.playerName, val, reason)
-                    count = count + 1
+                    table.insert(names, row.playerName)
                 end
             end
+            local count = DKP.BulkAdjustDKPBatch(names, val, reason)
             DKP.Print("已为 " .. count .. " 名玩家加 " .. val .. " DKP (" .. reason .. ")")
             DKP.RefreshDKPUI()
             d:Hide()
@@ -2959,13 +3008,13 @@ local function ShowRaidAwardDialog()
                 DKP.Print("请输入有效的正数分值")
                 return
             end
-            local count = 0
+            local names = {}
             for _, row in ipairs(d.memberRows) do
                 if row:IsShown() and row.cb:GetChecked() and row.playerName then
-                    DKP.AdjustDKP(row.playerName, -val, reason)
-                    count = count + 1
+                    table.insert(names, row.playerName)
                 end
             end
+            local count = DKP.BulkAdjustDKPBatch(names, -val, reason)
             DKP.Print("已为 " .. count .. " 名玩家扣 " .. val .. " DKP (" .. reason .. ")")
             DKP.RefreshDKPUI()
             d:Hide()
@@ -3423,12 +3472,6 @@ local function CreatePlayerRow(parent, index)
     editBtn:SetText("编辑")
     row.editBtn = editBtn
 
-    local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    delBtn:SetSize(32, 18)
-    delBtn:SetPoint("LEFT", editBtn, "RIGHT", 2, 0)
-    delBtn:SetText("删除")
-    row.delBtn = delBtn
-
     return row
 end
 
@@ -3534,23 +3577,17 @@ function DKP.InitDKPPanel()
         if DKP.ShowExportDialog then DKP.ShowExportDialog() end
     end)
 
-    local settingsBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
-    settingsBtn:SetSize(50, 22)
-    settingsBtn:SetPoint("LEFT", exportBtn, "RIGHT", 4, 0)
-    settingsBtn:SetText("设置")
-    settingsBtn:SetScript("OnClick", function() ShowSettingsDialog() end)
-
     -- 版本查看按钮（所有人可用，第二排末尾）
     local versionBtn = CreateFrame("Button", nil, toolbar, "UIPanelButtonTemplate")
     versionBtn:SetSize(72, 22)
-    versionBtn:SetPoint("LEFT", settingsBtn, "RIGHT", 4, 0)
+    versionBtn:SetPoint("LEFT", exportBtn, "RIGHT", 4, 0)
     versionBtn:SetText("插件版本")
     versionBtn:SetScript("OnClick", function()
         DKP.ShowVersionDialog()
     end)
 
     -- 管理员专用按钮列表（RefreshDKPUI 时根据权限显示/隐藏）
-    parent.adminButtons = { syncAdminBtn, syncDKPBtn, bulkBtn, raidBtn, addBtn, importBtn, settingsBtn }
+    parent.adminButtons = { syncAdminBtn, syncDKPBtn, bulkBtn, raidBtn, addBtn, importBtn }
 
     -- 表头
     local headerY = -TOOLBAR_HEIGHT - 2
@@ -3684,29 +3721,12 @@ function DKP.RefreshDKPUI()
         end
 
         -- 权限控制行操作按钮
-        row.editBtn:SetShown(isOfficer)
-        row.delBtn:SetShown(isOfficer)
+        row.editBtn:SetShown(isAdmin)
 
         -- 按钮回调
         local playerName = entry.name
         row.editBtn:SetScript("OnClick", function()
             ShowEditPlayerDialog(playerName)
-        end)
-        row.delBtn:SetScript("OnClick", function()
-            StaticPopupDialogs["YTHT_DKP_DELETE_PLAYER"] = {
-                text = "确定要删除玩家 " .. playerName .. " 吗？\n此操作不可撤销。",
-                button1 = "确定",
-                button2 = "取消",
-                OnAccept = function()
-                    DKP.RemovePlayer(playerName)
-                    DKP.RefreshDKPUI()
-                end,
-                timeout = 0,
-                whileDead = true,
-                hideOnEscape = true,
-            }
-            local popup = StaticPopup_Show("YTHT_DKP_DELETE_PLAYER")
-            if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
         end)
 
         row:Show()
