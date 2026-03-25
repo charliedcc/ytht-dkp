@@ -184,11 +184,11 @@ end
 ----------------------------------------------------------------------
 -- 分包发送
 ----------------------------------------------------------------------
--- WoW addon message 限制: 每前缀突发10条，之后每秒恢复1条
--- 前10条用 0.1s 间隔快速发，之后每条间隔 1.1s
-local CHUNK_BURST_LIMIT = 8      -- 保守用8（留2条余量给其他消息）
-local CHUNK_BURST_INTERVAL = 0.1  -- 突发期间隔
-local CHUNK_SLOW_INTERVAL = 1.1   -- 突发后间隔（等恢复）
+-- WoW addon message 限制: 约10条突发，之后每秒恢复1条
+-- burst 配额是全局共享的（所有前缀 + 频道），要留足余量
+local CHUNK_BURST_LIMIT = 4       -- 保守 burst（其他插件也占配额）
+local CHUNK_BURST_INTERVAL = 0.15 -- 突发期间隔（略长以防丢包）
+local CHUNK_SLOW_INTERVAL = 1.2   -- 突发后间隔（确保恢复 1 token）
 
 local function SendChunked(prefix, msgType, data, channel, target, onComplete)
     -- 动态计算 chunk 大小，确保总消息 <= 255 字节
@@ -221,8 +221,8 @@ local function SendChunked(prefix, msgType, data, channel, target, onComplete)
                 C_ChatInfo.SendAddonMessage(prefix, msg, channel or "RAID")
             end
             if i == numChunks and onComplete then
-                -- 等消息队列恢复再启动下一批
-                C_Timer.After(1.5, onComplete)
+                -- 等消息队列 burst bucket 恢复再启动下一批
+                C_Timer.After(4, onComplete)
             end
         end)
     end
@@ -919,8 +919,13 @@ function DKP.BroadcastFullSync()
         function(done)
             local optsData = SerializeOptions()
             if optsData ~= "" then
-                SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, channel, nil, done)
+                DKP.Print("正在同步配置...")
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, channel, nil, function()
+                    DKP.Print("[同步进度] 配置发送完成")
+                    done()
+                end)
             else
+                DKP.Print("[同步进度] 无配置数据，跳过")
                 done()
             end
         end,
@@ -929,16 +934,22 @@ function DKP.BroadcastFullSync()
             if DKP.SerializeSheets then
                 local sheetsData = DKP.SerializeSheets()
                 if sheetsData ~= "" then
-                    DKP.Print("正在同步掉落列表...")
-                    SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, channel, nil, done)
+                    local numChunks = math.ceil(#sheetsData / (255 - #"SYNC_SHEETS" - 12))
+                    DKP.Print("正在同步掉落列表... (" .. #sheetsData .. " 字节, " .. numChunks .. " 包)")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, channel, nil, function()
+                        DKP.Print("[同步进度] 掉落列表发送完成")
+                        done()
+                    end)
                 else
+                    DKP.Print("[同步进度] 无掉落列表数据，跳过")
                     done()
                 end
             else
+                DKP.Print("[同步进度] SerializeSheets 不存在，跳过")
                 done()
             end
         end,
-        -- 5. 拍卖记录（优先于操作记录，方便排查问题）
+        -- 5. 拍卖记录
         function(done)
             if DKP.SerializeActivity then
                 local act = {
@@ -948,9 +959,14 @@ function DKP.BroadcastFullSync()
                 }
                 local data = DKP.SerializeActivity(act)
                 if data ~= "" then
-                    DKP.Print("正在同步拍卖记录...")
-                    SendChunked(DKP.ADDON_PREFIX, "SYNC_AUCTION_HISTORY", data, channel, nil, done)
+                    local numChunks = math.ceil(#data / (255 - #"SYNC_AUCTION_HISTORY" - 12))
+                    DKP.Print("正在同步拍卖记录... (" .. #data .. " 字节, " .. numChunks .. " 包)")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_AUCTION_HISTORY", data, channel, nil, function()
+                        DKP.Print("[同步进度] 拍卖记录发送完成")
+                        done()
+                    end)
                 else
+                    DKP.Print("[同步进度] 无拍卖记录数据，跳过")
                     done()
                 end
             else
@@ -967,9 +983,14 @@ function DKP.BroadcastFullSync()
                 }
                 local data = DKP.SerializeActivity(act)
                 if data ~= "" then
-                    DKP.Print("正在同步操作记录...")
-                    SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel, nil, done)
+                    local numChunks = math.ceil(#data / (255 - #"SYNC_LOG" - 12))
+                    DKP.Print("正在同步操作记录... (" .. #data .. " 字节, " .. numChunks .. " 包)")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel, nil, function()
+                        DKP.Print("[同步进度] 操作记录发送完成")
+                        done()
+                    end)
                 else
+                    DKP.Print("[同步进度] 无操作记录数据，跳过")
                     done()
                 end
             else
@@ -1090,6 +1111,7 @@ local function HandleActivityFormatChunk(parts, sender, pendingTable, sKey, labe
     end
 
     if received >= sync.expected then
+        DKP.Print("|cff888888[" .. label .. "] 收齐 " .. received .. " 包，开始解析...|r")
         local fullData = {}
         for i = 1, sync.expected do
             table.insert(fullData, sync.chunks[i] or "")
@@ -1097,13 +1119,21 @@ local function HandleActivityFormatChunk(parts, sender, pendingTable, sKey, labe
         local text = table.concat(fullData)
         pendingTable[sKey] = nil
 
-        if not IsTrustedSender(sender) then return end
+        if not IsTrustedSender(sender) then
+            DKP.Print("|cffFF4444[" .. label .. "] 不信任的发送者: " .. sender .. "|r")
+            return
+        end
 
         if DKP.DeserializeActivity then
             local act = DKP.DeserializeActivity(text)
             if act then
+                DKP.Print("|cff888888[" .. label .. "] 解析成功: log=" .. #(act.log or {}) .. " auction=" .. #(act.auctionHistory or {}) .. "|r")
                 applyFn(act, sender)
+            else
+                DKP.Print("|cffFF4444[" .. label .. "] DeserializeActivity 返回 nil (数据长度: " .. #text .. ", 前50字符: " .. text:sub(1, 50) .. ")|r")
             end
+        else
+            DKP.Print("|cffFF4444[" .. label .. "] DKP.DeserializeActivity 不存在|r")
         end
     end
 end
@@ -1255,6 +1285,7 @@ local function HandleSheetsChunk(parts, sender)
     end
 
     if received >= sync.expected then
+        DKP.Print("|cff888888[Sheets] 收齐 " .. received .. " 包，开始解析...|r")
         local fullData = {}
         for i = 1, sync.expected do
             table.insert(fullData, sync.chunks[i] or "")
@@ -1262,10 +1293,16 @@ local function HandleSheetsChunk(parts, sender)
         local text = table.concat(fullData)
         pendingSheetsSync[sKey] = nil
 
-        if not IsTrustedSender(sender) then return end
+        if not IsTrustedSender(sender) then
+            DKP.Print("|cffFF4444[Sheets] 不信任的发送者: " .. sender .. "|r")
+            return
+        end
 
         local newSheets = DKP.DeserializeSheets(text)
-        if not next(newSheets) then return end
+        if not next(newSheets) then
+            DKP.Print("|cffFF4444[Sheets] 反序列化结果为空 (数据长度: " .. #text .. ")|r")
+            return
+        end
 
         local senderShort = GetShortName(sender)
         local sheetCount = 0
@@ -1345,6 +1382,13 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
 
         local parts = { strsplit(MSG_SEP, msg) }
         local msgType = parts[1]
+
+        -- DEBUG: 显示接收到的同步消息类型和分包进度
+        if msgType and msgType:find("^SYNC_") then
+            local ci = parts[2] or "?"
+            local tc = parts[3] or "?"
+            DKP.Print("|cff888888[收到] " .. msgType .. " " .. ci .. "/" .. tc .. " (来自 " .. GetShortName(sender) .. ")|r")
+        end
 
         if msgType == "DKP_CHANGE" then
             HandleDKPChange(parts, sender)

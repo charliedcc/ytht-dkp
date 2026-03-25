@@ -1841,7 +1841,8 @@ local function SerializeLogEntry(entry)
     }, ",")
 end
 
-function DKP.SerializeActivity(activity)
+-- forExport: true=导出EditBox显示(替换\031→§), false/nil=同步传输(保留原始字符)
+function DKP.SerializeActivity(activity, forExport)
     local lines = {}
     table.insert(lines, "[YTHT_DKP_ACTIVITY_V1]")
 
@@ -1934,8 +1935,11 @@ function DKP.SerializeActivity(activity)
 
     table.insert(lines, "[END]")
     local result = table.concat(lines, "\n")
-    -- 导出用: 把 \031 控制字符替换为 § 以便 EditBox 显示
-    result = result:gsub("\031", "§")
+    -- 仅导出时替换 \031→§（EditBox 无法显示控制字符）
+    -- 同步传输时保留原始字符，避免和 AUCTION_HISTORY 的 § 分隔符冲突
+    if forExport then
+        result = result:gsub("\031", "§")
+    end
     return result
 end
 
@@ -2558,7 +2562,7 @@ function DKP.ShowExportDialog(preloadText)
                 auctionHistory = DKP.db.auctionHistory or {},
                 sheets = DKP.db.sheets or {},
             }
-            d.editBox:SetText(DKP.SerializeActivity(act) or "")
+            d.editBox:SetText(DKP.SerializeActivity(act, true) or "")
             d.editBox:HighlightText()
             d.editBox:SetFocus()
         end)

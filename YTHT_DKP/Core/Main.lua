@@ -1673,7 +1673,7 @@ function DKP.ShowActivityHistory()
         -- 导出：使用 SerializeActivity 统一格式
         row.exportBtn:SetScript("OnClick", function()
             if DKP.SerializeActivity and DKP.ShowExportDialog then
-                local text = DKP.SerializeActivity(act)
+                local text = DKP.SerializeActivity(act, true)
                 DKP.ShowExportDialog(text)
             end
         end)
