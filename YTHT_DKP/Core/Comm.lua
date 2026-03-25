@@ -91,33 +91,6 @@ function DKP.BroadcastReverse(entryID)
 end
 
 ----------------------------------------------------------------------
--- 单条日志广播（批量操作完成后发送，接收方追加到本地日志）
--- 用 SendChunked 发送（批量操作的玩家列表可能超 255 字节）
--- onDone: 可选回调，发送完成后执行
-----------------------------------------------------------------------
-function DKP.BroadcastLogEntry(entry, onDone)
-    if not DKP.IsOfficer() then
-        if onDone then onDone() end
-        return
-    end
-    if not entry or not DKP.SerializeLogEntryFn then
-        if onDone then onDone() end
-        return
-    end
-    local data = DKP.SerializeLogEntryFn(entry)
-    if not data or data == "" then
-        if onDone then onDone() end
-        return
-    end
-    local channel = GetChannel()
-    if not channel then
-        if onDone then onDone() end
-        return
-    end
-    SendChunked(DKP.ADDON_PREFIX, "LOG_ENTRY", data, channel, nil, onDone)
-end
-
-----------------------------------------------------------------------
 -- DKP 变动广播（管理员调用）
 ----------------------------------------------------------------------
 function DKP.BroadcastDKPChange(playerName, newDKP, changeAmount, reason, timestamp, officer)
@@ -277,6 +250,33 @@ local function RunSendChain(steps)
         end)
     end
     runNext(1)
+end
+
+----------------------------------------------------------------------
+-- 单条日志广播（批量操作完成后发送，接收方追加到本地日志）
+-- 用 SendChunked 发送（批量操作的玩家列表可能超 255 字节）
+-- onDone: 可选回调，发送完成后执行
+----------------------------------------------------------------------
+function DKP.BroadcastLogEntry(entry, onDone)
+    if not DKP.IsOfficer() then
+        if onDone then onDone() end
+        return
+    end
+    if not entry or not DKP.SerializeLogEntryFn then
+        if onDone then onDone() end
+        return
+    end
+    local data = DKP.SerializeLogEntryFn(entry)
+    if not data or data == "" then
+        if onDone then onDone() end
+        return
+    end
+    local channel = GetChannel()
+    if not channel then
+        if onDone then onDone() end
+        return
+    end
+    SendChunked(DKP.ADDON_PREFIX, "LOG_ENTRY", data, channel, nil, onDone)
 end
 
 ----------------------------------------------------------------------
