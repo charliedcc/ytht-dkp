@@ -248,9 +248,13 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
 
     local ch = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
 
+    -- 是否由本客户端广播竞拍通报（仅管理员 + 开关开启）
+    local shouldBroadcast = ch and DKP.IsOfficer and DKP.IsOfficer()
+        and (not DKP.db or not DKP.db.options or DKP.db.options.enableChatAuctionBroadcast ~= false)
+
     -- 超额出价直接不算（sh 不检查，因为已经是 max(0,DKP)）
     if bidType == "bid" and playerData and resolvedAmount > playerDKP then
-        if ch then
+        if shouldBroadcast then
             SendChatMessage("[竞拍] " .. charName .. " 出价 " .. resolvedAmount
                 .. " 超过DKP余额(" .. playerDKP .. ")，不计入", ch)
         end
@@ -267,7 +271,7 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
         end
         -- 不允许降低出价（sh 除外，sh 就是全押无论多少）
         if not isAllIn and resolvedAmount <= prevMax then
-            if ch then
+            if shouldBroadcast then
                 SendChatMessage("[竞拍] " .. charName .. " 出价 " .. resolvedAmount
                     .. " 不高于当前出价(" .. prevMax .. ")，不计入", ch)
             end
@@ -276,7 +280,7 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
     end
 
     -- sh 通报到团队频道
-    if isAllIn and ch then
+    if isAllIn and shouldBroadcast then
         SendChatMessage("[竞拍] " .. charName .. " sh = " .. resolvedAmount .. " DKP", ch)
     end
 

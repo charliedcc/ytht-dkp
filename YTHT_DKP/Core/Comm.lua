@@ -533,6 +533,17 @@ local function HandleTeamSync(parts, sender)
         team.admins = newAdmins
         if masterAdmin then team.masterAdmin = masterAdmin end
         team.name = teamName
+
+        -- 团员自动切换到该团队（TEAM_SYNC 明确指定了 teamID）
+        if DKP.db.currentTeam ~= teamID and not DKP.IsAdminMode() then
+            DKP.SwitchTeam(teamID)
+            -- 确保团员模式
+            if DKP.db.mode ~= "member" and not (team.admins and team.admins[DKP.playerName]) then
+                DKP.db.mode = "member"
+            end
+            DKP.Print("已自动切换到团队: " .. teamName)
+        end
+
         -- 如果当前在这个团队，刷新快捷引用和UI
         if DKP.db.currentTeam == teamID then
             DKP.db.admins = team.admins
@@ -927,26 +938,7 @@ function DKP.BroadcastFullSync()
                 done()
             end
         end,
-        -- 5. 操作记录
-        function(done)
-            if DKP.SerializeActivity then
-                local act = {
-                    name = "sync_log", startTime = 0, endTime = time(),
-                    log = DKP.db.log or {}, auctionHistory = {},
-                    sheets = {}, players = {},
-                }
-                local data = DKP.SerializeActivity(act)
-                if data ~= "" then
-                    DKP.Print("正在同步操作记录...")
-                    SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel, nil, done)
-                else
-                    done()
-                end
-            else
-                done()
-            end
-        end,
-        -- 6. 拍卖记录
+        -- 5. 拍卖记录（优先于操作记录，方便排查问题）
         function(done)
             if DKP.SerializeActivity then
                 local act = {
@@ -958,6 +950,25 @@ function DKP.BroadcastFullSync()
                 if data ~= "" then
                     DKP.Print("正在同步拍卖记录...")
                     SendChunked(DKP.ADDON_PREFIX, "SYNC_AUCTION_HISTORY", data, channel, nil, done)
+                else
+                    done()
+                end
+            else
+                done()
+            end
+        end,
+        -- 6. 操作记录
+        function(done)
+            if DKP.SerializeActivity then
+                local act = {
+                    name = "sync_log", startTime = 0, endTime = time(),
+                    log = DKP.db.log or {}, auctionHistory = {},
+                    sheets = {}, players = {},
+                }
+                local data = DKP.SerializeActivity(act)
+                if data ~= "" then
+                    DKP.Print("正在同步操作记录...")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel, nil, done)
                 else
                     done()
                 end

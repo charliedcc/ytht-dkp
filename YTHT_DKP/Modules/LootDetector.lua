@@ -216,17 +216,26 @@ f:SetScript("OnEvent", function(self, event, ...)
                             end
                             local members = DKP.GetRaidMembers and DKP.GetRaidMembers() or {}
                             local names = {}
+                            local charNames = {}
                             for _, m in ipairs(members) do
                                 if m.playerName and m.online then
                                     table.insert(names, m.playerName)
+                                    table.insert(charNames, m.shortName)
                                 end
                             end
-                            local cnt = DKP.BulkAdjustDKPBatch and DKP.BulkAdjustDKPBatch(names, totalPoints, reason) or 0
+                            local cnt = DKP.BulkAdjustDKPBatch and DKP.BulkAdjustDKPBatch(names, totalPoints, reason, charNames) or 0
                             if cnt > 0 then
                                 local msg = encounterName .. " 击杀! " .. cnt .. " 名玩家 +" .. totalPoints .. " DKP"
                                 DKP.Print(msg)
                                 local ch = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
                                 if ch then SendChatMessage("[YTHT-DKP] " .. msg, ch) end
+                                -- Boss 击杀后自动同步 DKP 给全团
+                                C_Timer.After(2, function()
+                                    if DKP.BroadcastDKPData then
+                                        DKP.BroadcastDKPData()
+                                        DKP.Print("已自动同步 DKP 数据")
+                                    end
+                                end)
                             end
                             if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
                         end)
