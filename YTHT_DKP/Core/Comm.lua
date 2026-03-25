@@ -1432,6 +1432,7 @@ end
 local commFrame = CreateFrame("Frame")
 commFrame:RegisterEvent("CHAT_MSG_ADDON")
 commFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+local rosterDebounceTimer = nil  -- GROUP_ROSTER_UPDATE 防抖
 
 commFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "CHAT_MSG_ADDON" then
@@ -1540,15 +1541,19 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
                     if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
                     if DKP.RefreshTableUI then DKP.RefreshTableUI() end
                 end
-                -- 管理员进团后广播 admin 列表
-                C_Timer.After(3, function()
+                -- 管理员广播 admin 列表（防抖：5s 内多次触发只执行最后一次）
+                if rosterDebounceTimer then rosterDebounceTimer:Cancel() end
+                rosterDebounceTimer = C_Timer.NewTimer(5, function()
+                    rosterDebounceTimer = nil
                     if DKP.IsOfficer() then
                         DKP.BroadcastAdminSync()
                     end
                 end)
             else
-                -- 团员进团后请求同步
-                C_Timer.After(3, function()
+                -- 团员请求同步（防抖：5s 内多次触发只执行最后一次）
+                if rosterDebounceTimer then rosterDebounceTimer:Cancel() end
+                rosterDebounceTimer = C_Timer.NewTimer(5, function()
+                    rosterDebounceTimer = nil
                     if not DKP.IsOfficer() then
                         DKP.SendDKPMessage("SYNC_REQUEST")
                     end
