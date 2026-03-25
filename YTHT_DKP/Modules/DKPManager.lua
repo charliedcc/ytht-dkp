@@ -1472,8 +1472,12 @@ local function ShowBulkAdjustDialog()
                 local details = {}
                 for name, data in pairs(DKP.db.players) do
                     if (data.dkp or 0) > 0 then
-                        local decay = math.floor(data.dkp * pct / 100 + 0.5)
-                        table.insert(details, { name = name, amount = -decay })
+                        -- 直接算最终分数: newDKP = round(dkp * (1 - pct/100))
+                        local newDKP = math.floor(data.dkp * (1 - pct / 100) + 0.5)
+                        local decay = data.dkp - newDKP
+                        if decay > 0 then
+                            table.insert(details, { name = name, amount = -decay })
+                        end
                     end
                 end
                 local count = DKP.BulkAdjustDKPDetailed(details, "DKP衰减 " .. pct .. "%")
@@ -1487,7 +1491,7 @@ local function ShowBulkAdjustDialog()
 
         local decayNote = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         decayNote:SetPoint("TOPLEFT", 20, -182)
-        decayNote:SetText("|cff888888扣除分数四舍五入，仅对正DKP玩家生效|r")
+        decayNote:SetText("|cff888888最终DKP四舍五入，仅对正DKP玩家生效|r")
 
         local cancelBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
         cancelBtn:SetSize(80, 24)
@@ -3451,7 +3455,7 @@ local function ShowLogDialog()
             row.reverseBtn:Enable()
             row.reverseBtn:SetScript("OnClick", function()
                 StaticPopupDialogs["YTHT_DKP_REVERSE_LOG"] = {
-                    text = confirmText,
+                    text = "%s",
                     button1 = "确定冲红",
                     button2 = "取消",
                     OnAccept = function()
@@ -3463,7 +3467,7 @@ local function ShowLogDialog()
                     whileDead = true,
                     hideOnEscape = true,
                 }
-                local popup = StaticPopup_Show("YTHT_DKP_REVERSE_LOG")
+                local popup = StaticPopup_Show("YTHT_DKP_REVERSE_LOG", confirmText)
                 if popup then popup:SetFrameStrata("FULLSCREEN_DIALOG") end
             end)
         end
