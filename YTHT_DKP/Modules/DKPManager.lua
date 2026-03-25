@@ -227,11 +227,14 @@ function DKP.BulkAdjustDKPBatch(playerNames, amount, reason, charNames)
             end
             SendChatMessage(msg, ch)
         end
-        -- 先广播这条日志（立即，单条消息），再广播 DKP 数据（延迟，chunked）
-        if DKP.BroadcastLogEntry then DKP.BroadcastLogEntry(logEntry) end
-        C_Timer.After(1, function()
-            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
-        end)
+        -- 先广播日志条目（chunked），完成后再广播 DKP 数据
+        if DKP.BroadcastLogEntry then
+            DKP.BroadcastLogEntry(logEntry, function()
+                if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+            end)
+        elseif DKP.BroadcastDKPData then
+            DKP.BroadcastDKPData()
+        end
     end
     return #affected
 end
@@ -259,11 +262,14 @@ function DKP.BulkAdjustDKPDetailed(details, reason)
             officer = DKP.playerName or "Unknown",
         }
         table.insert(DKP.db.log, logEntry)
-        -- 先广播这条日志（立即，单条消息），再广播 DKP 数据（延迟，chunked）
-        if DKP.BroadcastLogEntry then DKP.BroadcastLogEntry(logEntry) end
-        C_Timer.After(1, function()
-            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
-        end)
+        -- 先广播日志条目（chunked），完成后再广播 DKP 数据
+        if DKP.BroadcastLogEntry then
+            DKP.BroadcastLogEntry(logEntry, function()
+                if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+            end)
+        elseif DKP.BroadcastDKPData then
+            DKP.BroadcastDKPData()
+        end
     end
     return #affected
 end
