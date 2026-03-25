@@ -158,17 +158,14 @@ function DKP.RemoveCharacter(playerName, charName)
     return false
 end
 
--- 调整DKP（不写日志，供批量操作内部使用）
+-- 调整DKP（不写日志不广播，供批量操作内部使用）
+-- 批量操作完成后由调用方统一 BroadcastDKPData
 local function AdjustDKPRaw(playerName, amount)
     local player = DKP.db and DKP.db.players[playerName]
     if not player then return false end
     player.dkp = (player.dkp or 0) + amount
     player.lastUpdated = time()
     DKP.hasUnsavedChanges = true
-    -- 广播DKP变动
-    if DKP.BroadcastDKPChange then
-        DKP.BroadcastDKPChange(playerName, player.dkp, amount, "")
-    end
     return true
 end
 
@@ -229,6 +226,8 @@ function DKP.BulkAdjustDKPBatch(playerNames, amount, reason, charNames)
             end
             SendChatMessage(msg, ch)
         end
+        -- 批量完成后一次性广播 DKP 数据
+        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
     end
     return #affected
 end
@@ -255,6 +254,8 @@ function DKP.BulkAdjustDKPDetailed(details, reason)
             timestamp = time(),
             officer = DKP.playerName or "Unknown",
         })
+        -- 批量完成后一次性广播 DKP 数据
+        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
     end
     return #affected
 end
