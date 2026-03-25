@@ -285,11 +285,11 @@ end
 local function HandleSyncRequest(sender)
     if not DKP.IsOfficer() then return end
 
+    -- 进团同步只发权限 + DKP（快速），其他数据用全量同步
     RunSendChain({
         -- 1. 权限
         function(done)
             DKP.BroadcastAdminSync()
-            -- TEAM_SYNC 通常很小（1-2 chunk），等 0.5s 再继续
             C_Timer.After(0.5, done)
         end,
         -- 2. DKP 数据
@@ -297,28 +297,6 @@ local function HandleSyncRequest(sender)
             local data = SerializePlayers()
             if data ~= "" then
                 SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", data, nil, sender, done)
-            else
-                done()
-            end
-        end,
-        -- 3. Options
-        function(done)
-            local optsData = SerializeOptions()
-            if optsData ~= "" then
-                SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, nil, sender, done)
-            else
-                done()
-            end
-        end,
-        -- 4. Sheets
-        function(done)
-            if DKP.SerializeSheets then
-                local sheetsData = DKP.SerializeSheets()
-                if sheetsData ~= "" then
-                    SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, nil, sender, done)
-                else
-                    done()
-                end
             else
                 done()
             end
@@ -958,13 +936,8 @@ function DKP.BroadcastFullSync()
         function(done)
             local optsData = SerializeOptions()
             if optsData ~= "" then
-                DKP.Print("正在同步配置...")
-                SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, channel, nil, function()
-                    DKP.Print("[同步进度] 配置发送完成")
-                    done()
-                end)
+                SendChunked(DKP.ADDON_PREFIX, "SYNC_OPTIONS", optsData, channel, nil, done)
             else
-                DKP.Print("[同步进度] 无配置数据，跳过")
                 done()
             end
         end,
@@ -973,18 +946,12 @@ function DKP.BroadcastFullSync()
             if DKP.SerializeSheets then
                 local sheetsData = DKP.SerializeSheets()
                 if sheetsData ~= "" then
-                    local numChunks = math.ceil(#sheetsData / (255 - #"SYNC_SHEETS" - 12))
-                    DKP.Print("正在同步掉落列表... (" .. #sheetsData .. " 字节, " .. numChunks .. " 包)")
-                    SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, channel, nil, function()
-                        DKP.Print("[同步进度] 掉落列表发送完成")
-                        done()
-                    end)
+                    DKP.Print("正在同步掉落列表...")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", sheetsData, channel, nil, done)
                 else
-                    DKP.Print("[同步进度] 无掉落列表数据，跳过")
                     done()
                 end
             else
-                DKP.Print("[同步进度] SerializeSheets 不存在，跳过")
                 done()
             end
         end,
@@ -998,14 +965,9 @@ function DKP.BroadcastFullSync()
                 }
                 local data = DKP.SerializeActivity(act)
                 if data ~= "" then
-                    local numChunks = math.ceil(#data / (255 - #"SYNC_AUCTION_HISTORY" - 12))
-                    DKP.Print("正在同步拍卖记录... (" .. #data .. " 字节, " .. numChunks .. " 包)")
-                    SendChunked(DKP.ADDON_PREFIX, "SYNC_AUCTION_HISTORY", data, channel, nil, function()
-                        DKP.Print("[同步进度] 拍卖记录发送完成")
-                        done()
-                    end)
+                    DKP.Print("正在同步拍卖记录...")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_AUCTION_HISTORY", data, channel, nil, done)
                 else
-                    DKP.Print("[同步进度] 无拍卖记录数据，跳过")
                     done()
                 end
             else
@@ -1022,14 +984,9 @@ function DKP.BroadcastFullSync()
                 }
                 local data = DKP.SerializeActivity(act)
                 if data ~= "" then
-                    local numChunks = math.ceil(#data / (255 - #"SYNC_LOG" - 12))
-                    DKP.Print("正在同步操作记录... (" .. #data .. " 字节, " .. numChunks .. " 包)")
-                    SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel, nil, function()
-                        DKP.Print("[同步进度] 操作记录发送完成")
-                        done()
-                    end)
+                    DKP.Print("正在同步操作记录...")
+                    SendChunked(DKP.ADDON_PREFIX, "SYNC_LOG", data, channel, nil, done)
                 else
-                    DKP.Print("[同步进度] 无操作记录数据，跳过")
                     done()
                 end
             else
@@ -1198,7 +1155,6 @@ local function HandleLogEntryChunk(parts, sender)
         end
 
         table.insert(DKP.db.log, entry)
-        DKP.Print("收到操作记录 (来自 " .. GetShortName(sender) .. "): " .. (entry.reason or ""))
         if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
     end
 end
@@ -1233,7 +1189,6 @@ local function HandleActivityFormatChunk(parts, sender, pendingTable, sKey, labe
     end
 
     if received >= sync.expected then
-        DKP.Print("|cff888888[" .. label .. "] 收齐 " .. received .. " 包，开始解析...|r")
         local fullData = {}
         for i = 1, sync.expected do
             table.insert(fullData, sync.chunks[i] or "")
@@ -1241,21 +1196,13 @@ local function HandleActivityFormatChunk(parts, sender, pendingTable, sKey, labe
         local text = table.concat(fullData)
         pendingTable[sKey] = nil
 
-        if not IsTrustedSender(sender) then
-            DKP.Print("|cffFF4444[" .. label .. "] 不信任的发送者: " .. sender .. "|r")
-            return
-        end
+        if not IsTrustedSender(sender) then return end
 
         if DKP.DeserializeActivity then
             local act = DKP.DeserializeActivity(text)
             if act then
-                DKP.Print("|cff888888[" .. label .. "] 解析成功: log=" .. #(act.log or {}) .. " auction=" .. #(act.auctionHistory or {}) .. "|r")
                 applyFn(act, sender)
-            else
-                DKP.Print("|cffFF4444[" .. label .. "] DeserializeActivity 返回 nil (数据长度: " .. #text .. ", 前50字符: " .. text:sub(1, 50) .. ")|r")
             end
-        else
-            DKP.Print("|cffFF4444[" .. label .. "] DKP.DeserializeActivity 不存在|r")
         end
     end
 end
@@ -1407,7 +1354,6 @@ local function HandleSheetsChunk(parts, sender)
     end
 
     if received >= sync.expected then
-        DKP.Print("|cff888888[Sheets] 收齐 " .. received .. " 包，开始解析...|r")
         local fullData = {}
         for i = 1, sync.expected do
             table.insert(fullData, sync.chunks[i] or "")
@@ -1415,16 +1361,10 @@ local function HandleSheetsChunk(parts, sender)
         local text = table.concat(fullData)
         pendingSheetsSync[sKey] = nil
 
-        if not IsTrustedSender(sender) then
-            DKP.Print("|cffFF4444[Sheets] 不信任的发送者: " .. sender .. "|r")
-            return
-        end
+        if not IsTrustedSender(sender) then return end
 
         local newSheets = DKP.DeserializeSheets(text)
-        if not next(newSheets) then
-            DKP.Print("|cffFF4444[Sheets] 反序列化结果为空 (数据长度: " .. #text .. ")|r")
-            return
-        end
+        if not next(newSheets) then return end
 
         local senderShort = GetShortName(sender)
         local sheetCount = 0
@@ -1505,13 +1445,6 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
         local parts = { strsplit(MSG_SEP, msg) }
         local msgType = parts[1]
 
-        -- DEBUG: 显示接收到的同步消息类型和分包进度
-        if msgType and msgType:find("^SYNC_") then
-            local ci = parts[2] or "?"
-            local tc = parts[3] or "?"
-            DKP.Print("|cff888888[收到] " .. msgType .. " " .. ci .. "/" .. tc .. " (来自 " .. GetShortName(sender) .. ")|r")
-        end
-
         if msgType == "REVERSE" then
             -- 冲红通知：按 UUID 匹配本地日志并标记 reversed
             if IsTrustedSender(sender) then
@@ -1531,7 +1464,7 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
                         end
                     end
                 end
-                if found and foundEntry then
+                if found then
                     -- 生成本地冲红记录
                     local genID = DKP.GenerateLogID and DKP.GenerateLogID() or (time() .. "_" .. math.random(100000, 999999))
                     local reverseEntry = {
@@ -1550,10 +1483,7 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
                         reverseEntry.player = foundEntry.player
                     end
                     table.insert(DKP.db.log, reverseEntry)
-                    DKP.Print("收到冲红通知 (来自 " .. senderShort .. ")")
                     if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
-                else
-                    DKP.Print("|cff888888收到冲红通知但未找到匹配记录 (来自 " .. senderShort .. ", id=" .. entryID .. ")|r")
                 end
             end
         elseif msgType == "LOG_ENTRY" then
