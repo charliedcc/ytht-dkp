@@ -2740,12 +2740,10 @@ function DKP.ReverseLogEntry(logIndex)
         entry.reversed = true
         local count = type(entry.players[1]) == "table" and #entry.players or #entry.players
         DKP.Print("已冲红批量操作: " .. count .. " 人 (" .. (entry.reason or "") .. ")")
-        -- 延迟广播（等 burst bucket 恢复）
+        -- 先发冲红通知（单条消息，立即发送），再延迟发 DKP 全量数据
+        if DKP.BroadcastReverse then DKP.BroadcastReverse(entry.id) end
         C_Timer.After(2, function()
             if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
-        end)
-        C_Timer.After(3, function()
-            if DKP.BroadcastReverse then DKP.BroadcastReverse(entry.id) end
         end)
     else
         -- 单人条目冲红（用 ResolvePlayerName 回找 DKP 玩家）
@@ -2773,12 +2771,10 @@ function DKP.ReverseLogEntry(logIndex)
         DKP.Print("已冲红: " .. entry.player .. " " ..
             (entry.amount >= 0 and "+" or "") .. entry.amount ..
             " DKP (" .. (entry.reason or "") .. ")")
-        -- 延迟广播（等 burst bucket 恢复）
+        -- 先发冲红通知（单条消息，立即发送），再延迟发 DKP 全量数据
+        if DKP.BroadcastReverse then DKP.BroadcastReverse(entry.id) end
         C_Timer.After(2, function()
             if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
-        end)
-        C_Timer.After(3, function()
-            if DKP.BroadcastReverse then DKP.BroadcastReverse(entry.id) end
         end)
     end
     return true
