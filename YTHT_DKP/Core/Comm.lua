@@ -80,6 +80,26 @@ function DKP.SendDKPMessage(msg)
 end
 
 ----------------------------------------------------------------------
+-- 冲红广播：通知其他客户端标记某条日志为已冲红
+-- 发送: REVERSE\ttimestamp\treason\tofficer
+-- 接收方按 timestamp+reason 匹配本地日志并标记 reversed
+----------------------------------------------------------------------
+function DKP.BroadcastReverse(logIndex)
+    if not DKP.IsOfficer() then return end
+    local entry = DKP.db.log[logIndex]
+    if not entry then return end
+    local msg = table.concat({
+        "REVERSE",
+        tostring(entry.timestamp or 0),
+        entry.reason or "",
+        entry.officer or DKP.playerName or "",
+        entry.type or "",
+        tostring(entry.amount or 0),
+    }, MSG_SEP)
+    DKP.SendDKPMessage(msg)
+end
+
+----------------------------------------------------------------------
 -- DKP 变动广播（管理员调用）
 ----------------------------------------------------------------------
 function DKP.BroadcastDKPChange(playerName, newDKP, changeAmount, reason, timestamp, officer)
@@ -1035,8 +1055,9 @@ function DKP.SerializeSheets()
                 table.concat(itemParts, "^"),
             }, "~"))
         end
-        -- sheetName=boss1@@boss2@@boss3
-        table.insert(parts, sheetName .. "=" .. table.concat(bossParts, "@@"))
+        -- sheetName|createdAt=boss1@@boss2@@boss3
+        local createdAt = sheet.createdAt or 0
+        table.insert(parts, sheetName .. "|" .. tostring(createdAt) .. "=" .. table.concat(bossParts, "@@"))
     end
     return table.concat(parts, "\n")
 end
@@ -1046,7 +1067,16 @@ function DKP.DeserializeSheets(text)
     for line in text:gmatch("[^\n]+") do
         local sheetName, bossesStr = line:match("^(.-)=(.*)$")
         if sheetName then
-            local sheet = { bosses = {} }
+            -- 解析 createdAt（格式: sheetName|createdAt=...，兼容旧格式 sheetName=...）
+            local createdAt = 0
+            if sheetName:find("|") then
+                local name, ts = sheetName:match("^(.-)|(%d+)$")
+                if name then
+                    sheetName = name
+                    createdAt = tonumber(ts) or 0
+                end
+            end
+            local sheet = { bosses = {}, createdAt = createdAt }
             if bossesStr ~= "" then
                 -- 用 @@ 作为分隔符拆分 boss（gsub+gmatch 绕开 Lua 模式限制）
                 for bossStr in (bossesStr .. "@@"):gmatch("(.-)@@") do
@@ -1390,7 +1420,30 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
             DKP.Print("|cff888888[收到] " .. msgType .. " " .. ci .. "/" .. tc .. " (来自 " .. GetShortName(sender) .. ")|r")
         end
 
-        if msgType == "DKP_CHANGE" then
+        if msgType == "REVERSE" then
+            -- 冲红通知：按 timestamp+type+amount 匹配本地日志并标记 reversed
+            if IsTrustedSender(sender) then
+                local ts = tonumber(parts[2]) or 0
+                local reason = parts[3] or ""
+                local officer = parts[4] or ""
+                local entryType = parts[5] or ""
+                local amount = tonumber(parts[6]) or 0
+                local senderShort = GetShortName(sender)
+                local found = false
+                for _, e in ipairs(DKP.db.log) do
+                    if not e.reversed and e.timestamp == ts and e.type == entryType
+                       and (e.amount or 0) == amount then
+                        e.reversed = true
+                        found = true
+                        break
+                    end
+                end
+                if found then
+                    DKP.Print("收到冲红通知 (来自 " .. senderShort .. ")")
+                    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                end
+            end
+        elseif msgType == "DKP_CHANGE" then
             HandleDKPChange(parts, sender)
         elseif msgType == "SYNC_REQUEST" then
             HandleSyncRequest(sender)

@@ -1891,7 +1891,8 @@ function DKP.SerializeActivity(activity, forExport)
         table.insert(lines, SerializeLogEntry(entry))
     end
 
-    -- AUCTION_HISTORY
+    -- AUCTION_HISTORY（用 \030 Record Separator 分隔，避免 § 多字节传输问题）
+    local AH_SEP = "\030"
     local history = activity.auctionHistory or {}
     table.insert(lines, "[AUCTION_HISTORY]")
     for _, entry in ipairs(history) do
@@ -1918,7 +1919,7 @@ function DKP.SerializeActivity(activity, forExport)
             entry.encounterName or "",
             entry.instanceName or "",
             bidsStr,
-        }, "§"))
+        }, AH_SEP))
     end
 
     -- SHEETS（只在有数据时序列化，避免同步 log/auction 时带上无关的完整 sheets）
@@ -1939,10 +1940,11 @@ function DKP.SerializeActivity(activity, forExport)
 
     table.insert(lines, "[END]")
     local result = table.concat(lines, "\n")
-    -- 仅导出时替换 \031→§（EditBox 无法显示控制字符）
-    -- 同步传输时保留原始字符，避免和 AUCTION_HISTORY 的 § 分隔符冲突
+    -- 仅导出时替换控制字符→可见字符（EditBox 无法显示控制字符）
+    -- 同步传输时保留原始字符
     if forExport then
-        result = result:gsub("\031", "§")
+        result = result:gsub("\031", "§")  -- sheets 字段分隔符
+        result = result:gsub("\030", "§")  -- auction history 字段分隔符
     end
     return result
 end
@@ -2036,7 +2038,9 @@ function DKP.DeserializeActivity(text)
                 table.insert(activity.log, entry)
             end
         elseif currentSection == "AUCTION_HISTORY" then
-            local parts = { strsplit("§", line) }
+            -- 优先用 \030 分隔（新格式），回退到 § 分隔（旧导出格式）
+            local sep = line:find("\030") and "\030" or "§"
+            local parts = { strsplit(sep, line) }
             if #parts >= 10 then
                 local bids = {}
                 if parts[14] and parts[14] ~= "" then
@@ -2681,9 +2685,6 @@ function DKP.ReverseLogEntry(logIndex)
                 if player then
                     player.dkp = (player.dkp or 0) - amt
                     player.lastUpdated = time()
-                    if DKP.BroadcastDKPChange then
-                        DKP.BroadcastDKPChange(resolvedName, player.dkp, -amt, "冲红: " .. (entry.reason or ""))
-                    end
                 end
                 table.insert(reversePlayers, type(d) == "table" and { name = d.name, amount = -d.amount } or name)
             end
@@ -2706,9 +2707,6 @@ function DKP.ReverseLogEntry(logIndex)
                 if player then
                     player.dkp = (player.dkp or 0) + reverseAmount
                     player.lastUpdated = time()
-                    if DKP.BroadcastDKPChange then
-                        DKP.BroadcastDKPChange(resolvedName, player.dkp, reverseAmount, "冲红: " .. (entry.reason or ""))
-                    end
                 end
                 table.insert(names, name)
             end
@@ -2725,6 +2723,9 @@ function DKP.ReverseLogEntry(logIndex)
         entry.reversed = true
         local count = type(entry.players[1]) == "table" and #entry.players or #entry.players
         DKP.Print("已冲红批量操作: " .. count .. " 人 (" .. (entry.reason or "") .. ")")
+        -- 广播 DKP 数据 + 冲红记录
+        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        if DKP.BroadcastReverse then DKP.BroadcastReverse(logIndex) end
     else
         -- 单人条目冲红（用 ResolvePlayerName 回找 DKP 玩家）
         local reverseAmount = -entry.amount
@@ -2733,9 +2734,6 @@ function DKP.ReverseLogEntry(logIndex)
         if player then
             player.dkp = (player.dkp or 0) + reverseAmount
             player.lastUpdated = time()
-            if DKP.BroadcastDKPChange then
-                DKP.BroadcastDKPChange(resolvedName, player.dkp, reverseAmount, "冲红: " .. (entry.reason or ""))
-            end
         end
 
         table.insert(DKP.db.log, {
@@ -2752,6 +2750,9 @@ function DKP.ReverseLogEntry(logIndex)
         DKP.Print("已冲红: " .. entry.player .. " " ..
             (entry.amount >= 0 and "+" or "") .. entry.amount ..
             " DKP (" .. (entry.reason or "") .. ")")
+        -- 广播 DKP 数据 + 冲红记录
+        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        if DKP.BroadcastReverse then DKP.BroadcastReverse(logIndex) end
     end
     return true
 end
