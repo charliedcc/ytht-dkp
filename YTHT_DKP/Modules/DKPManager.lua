@@ -207,7 +207,7 @@ function DKP.BulkAdjustDKPBatch(playerNames, amount, reason, charNames)
         end
     end
     if #affected > 0 then
-        table.insert(DKP.db.log, {
+        local logEntry = {
             id = DKP.GenerateLogID(),
             type = amount >= 0 and "award" or "deduct",
             players = displayNames,
@@ -215,7 +215,8 @@ function DKP.BulkAdjustDKPBatch(playerNames, amount, reason, charNames)
             reason = reason or "",
             timestamp = time(),
             officer = DKP.playerName or "Unknown",
-        })
+        }
+        table.insert(DKP.db.log, logEntry)
         -- 团队频道通报
         local ch = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
         if ch then
@@ -226,8 +227,11 @@ function DKP.BulkAdjustDKPBatch(playerNames, amount, reason, charNames)
             end
             SendChatMessage(msg, ch)
         end
-        -- 批量完成后一次性广播 DKP 数据
-        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        -- 先广播这条日志（立即，单条消息），再广播 DKP 数据（延迟，chunked）
+        if DKP.BroadcastLogEntry then DKP.BroadcastLogEntry(logEntry) end
+        C_Timer.After(1, function()
+            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        end)
     end
     return #affected
 end
@@ -245,7 +249,7 @@ function DKP.BulkAdjustDKPDetailed(details, reason)
         end
     end
     if #affected > 0 then
-        table.insert(DKP.db.log, {
+        local logEntry = {
             id = DKP.GenerateLogID(),
             type = "decay",
             players = affected,  -- 明细数组 {name, amount}
@@ -253,9 +257,13 @@ function DKP.BulkAdjustDKPDetailed(details, reason)
             reason = reason or "",
             timestamp = time(),
             officer = DKP.playerName or "Unknown",
-        })
-        -- 批量完成后一次性广播 DKP 数据
-        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        }
+        table.insert(DKP.db.log, logEntry)
+        -- 先广播这条日志（立即，单条消息），再广播 DKP 数据（延迟，chunked）
+        if DKP.BroadcastLogEntry then DKP.BroadcastLogEntry(logEntry) end
+        C_Timer.After(1, function()
+            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        end)
     end
     return #affected
 end
@@ -1858,6 +1866,7 @@ local function SerializeLogEntry(entry)
         entry.id or "",
     }, ",")
 end
+DKP.SerializeLogEntryFn = SerializeLogEntry  -- 暴露给 Comm.lua
 
 -- forExport: true=导出EditBox显示(替换\031→§), false/nil=同步传输(保留原始字符)
 function DKP.SerializeActivity(activity, forExport)

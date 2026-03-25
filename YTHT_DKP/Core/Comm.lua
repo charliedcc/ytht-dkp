@@ -91,6 +91,22 @@ function DKP.BroadcastReverse(entryID)
 end
 
 ----------------------------------------------------------------------
+-- 单条日志广播（批量操作完成后发送，接收方追加到本地日志）
+-- 复用 SerializeLogEntry 格式，单条消息即可
+----------------------------------------------------------------------
+function DKP.BroadcastLogEntry(entry)
+    if not DKP.IsOfficer() then return end
+    if not entry then return end
+    if DKP.SerializeLogEntryFn then
+        local data = DKP.SerializeLogEntryFn(entry)
+        if data and data ~= "" then
+            local msg = table.concat({ "LOG_ENTRY", data }, MSG_SEP)
+            DKP.SendDKPMessage(msg)
+        end
+    end
+end
+
+----------------------------------------------------------------------
 -- DKP 变动广播（管理员调用）
 ----------------------------------------------------------------------
 function DKP.BroadcastDKPChange(playerName, newDKP, changeAmount, reason, timestamp, officer)
@@ -1418,20 +1434,88 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
                 local entryID = parts[2] or ""
                 local senderShort = GetShortName(sender)
                 local found = false
+                local foundEntry = nil
+                local foundIndex = 0
                 if entryID ~= "" then
-                    for _, e in ipairs(DKP.db.log) do
+                    for i, e in ipairs(DKP.db.log) do
                         if e.id == entryID and not e.reversed then
                             e.reversed = true
                             found = true
+                            foundEntry = e
+                            foundIndex = i
                             break
                         end
                     end
                 end
-                if found then
+                if found and foundEntry then
+                    -- 生成本地冲红记录
+                    local genID = DKP.GenerateLogID and DKP.GenerateLogID() or (time() .. "_" .. math.random(100000, 999999))
+                    local reverseEntry = {
+                        id = genID,
+                        type = "reverse",
+                        amount = -(foundEntry.amount or 0),
+                        reason = "冲红: " .. (foundEntry.reason or ""),
+                        timestamp = time(),
+                        officer = senderShort,
+                        reversedIndex = foundIndex,
+                    }
+                    -- 复制玩家信息
+                    if foundEntry.players then
+                        reverseEntry.players = foundEntry.players
+                    else
+                        reverseEntry.player = foundEntry.player
+                    end
+                    table.insert(DKP.db.log, reverseEntry)
                     DKP.Print("收到冲红通知 (来自 " .. senderShort .. ")")
                     if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
                 else
                     DKP.Print("|cff888888收到冲红通知但未找到匹配记录 (来自 " .. senderShort .. ", id=" .. entryID .. ")|r")
+                end
+            end
+        elseif msgType == "LOG_ENTRY" then
+            -- 单条日志追加（批量操作后广播）
+            if IsTrustedSender(sender) then
+                local data = parts[2] or ""
+                if data ~= "" then
+                    local fields = {}
+                    for part in data:gmatch("[^,]+") do table.insert(fields, part) end
+                    if #fields >= 6 then
+                        local entry = {
+                            timestamp = tonumber(fields[1]) or 0,
+                            type = fields[2] or "award",
+                            amount = tonumber(fields[4]) or 0,
+                            reason = (fields[5] or ""):gsub(";", ","),
+                            officer = fields[6] or "",
+                            reversed = fields[7] == "1",
+                            id = fields[8] and fields[8] ~= "" and fields[8] or nil,
+                        }
+                        local playerField = fields[3] or ""
+                        if playerField:find(";") then
+                            if playerField:find(":%-?%d") then
+                                entry.players = {}
+                                for pd in playerField:gmatch("[^;]+") do
+                                    local n, a = pd:match("^(.+):(%-?%d+)$")
+                                    if n then table.insert(entry.players, { name = n, amount = tonumber(a) }) end
+                                end
+                            else
+                                entry.players = {}
+                                for n in playerField:gmatch("[^;]+") do table.insert(entry.players, n) end
+                            end
+                        else
+                            entry.player = playerField
+                        end
+                        -- 去重：按 id 检查
+                        local dup = false
+                        if entry.id then
+                            for _, e in ipairs(DKP.db.log) do
+                                if e.id == entry.id then dup = true; break end
+                            end
+                        end
+                        if not dup then
+                            table.insert(DKP.db.log, entry)
+                            if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                        end
+                    end
                 end
             end
         elseif msgType == "DKP_CHANGE" then
