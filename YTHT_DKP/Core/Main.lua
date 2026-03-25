@@ -1865,6 +1865,20 @@ function DKP.OnInitialized()
         end
     end
 
+    -- 迁移：给没有 UUID 的日志条目补上
+    if DKP.db.log then
+        local idCount = 0
+        for _, entry in ipairs(DKP.db.log) do
+            if not entry.id then
+                entry.id = DKP.GenerateLogID and DKP.GenerateLogID() or (time() .. "_" .. math.random(100000, 999999))
+                idCount = idCount + 1
+            end
+        end
+        if idCount > 0 then
+            DKP.Print("|cff00FF00已为 " .. idCount .. " 条日志补充 UUID|r")
+        end
+    end
+
     -- 创建主框架
     DKP.MainFrame = CreateMainFrame()
 

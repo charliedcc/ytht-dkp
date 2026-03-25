@@ -81,21 +81,12 @@ end
 
 ----------------------------------------------------------------------
 -- 冲红广播：通知其他客户端标记某条日志为已冲红
--- 发送: REVERSE\ttimestamp\treason\tofficer
--- 接收方按 timestamp+reason 匹配本地日志并标记 reversed
+-- 发送: REVERSE\tentryID  （用 UUID 精确匹配）
 ----------------------------------------------------------------------
-function DKP.BroadcastReverse(logIndex)
+function DKP.BroadcastReverse(entryID)
     if not DKP.IsOfficer() then return end
-    local entry = DKP.db.log[logIndex]
-    if not entry then return end
-    local msg = table.concat({
-        "REVERSE",
-        tostring(entry.timestamp or 0),
-        entry.reason or "",
-        entry.officer or DKP.playerName or "",
-        entry.type or "",
-        tostring(entry.amount or 0),
-    }, MSG_SEP)
+    if not entryID then return end
+    local msg = table.concat({ "REVERSE", entryID }, MSG_SEP)
     DKP.SendDKPMessage(msg)
 end
 
@@ -427,6 +418,7 @@ local function HandleDKPChange(parts, sender)
     -- 追加到本地日志
     if changeAmount then
         table.insert(DKP.db.log, {
+            id = DKP.GenerateLogID and DKP.GenerateLogID() or (time() .. "_" .. math.random(100000, 999999)),
             type = changeAmount >= 0 and "award" or "deduct",
             player = playerName,
             amount = changeAmount,
@@ -1421,26 +1413,25 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
         if msgType == "REVERSE" then
-            -- 冲红通知：按 timestamp+type+amount 匹配本地日志并标记 reversed
+            -- 冲红通知：按 UUID 匹配本地日志并标记 reversed
             if IsTrustedSender(sender) then
-                local ts = tonumber(parts[2]) or 0
-                local reason = parts[3] or ""
-                local officer = parts[4] or ""
-                local entryType = parts[5] or ""
-                local amount = tonumber(parts[6]) or 0
+                local entryID = parts[2] or ""
                 local senderShort = GetShortName(sender)
                 local found = false
-                for _, e in ipairs(DKP.db.log) do
-                    if not e.reversed and e.timestamp == ts and e.type == entryType
-                       and (e.amount or 0) == amount then
-                        e.reversed = true
-                        found = true
-                        break
+                if entryID ~= "" then
+                    for _, e in ipairs(DKP.db.log) do
+                        if e.id == entryID and not e.reversed then
+                            e.reversed = true
+                            found = true
+                            break
+                        end
                     end
                 end
                 if found then
                     DKP.Print("收到冲红通知 (来自 " .. senderShort .. ")")
                     if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                else
+                    DKP.Print("|cff888888收到冲红通知但未找到匹配记录 (来自 " .. senderShort .. ", id=" .. entryID .. ")|r")
                 end
             end
         elseif msgType == "DKP_CHANGE" then

@@ -74,6 +74,13 @@ function DKP.GetPlayerByCharacter(charName)
 end
 
 ----------------------------------------------------------------------
+-- 日志条目 UUID 生成
+----------------------------------------------------------------------
+function DKP.GenerateLogID()
+    return time() .. "_" .. math.random(100000, 999999)
+end
+
+----------------------------------------------------------------------
 -- 玩家名→角色名（用于日志记录显示）
 ----------------------------------------------------------------------
 function DKP.GetDisplayName(playerName)
@@ -173,6 +180,7 @@ function DKP.AdjustDKP(playerName, amount, reason)
     player.lastUpdated = time()
     DKP.hasUnsavedChanges = true
     table.insert(DKP.db.log, {
+        id = DKP.GenerateLogID(),
         type = amount >= 0 and "award" or "deduct",
         player = DKP.GetDisplayName(playerName),
         amount = amount,
@@ -203,6 +211,7 @@ function DKP.BulkAdjustDKPBatch(playerNames, amount, reason, charNames)
     end
     if #affected > 0 then
         table.insert(DKP.db.log, {
+            id = DKP.GenerateLogID(),
             type = amount >= 0 and "award" or "deduct",
             players = displayNames,
             amount = amount,
@@ -238,6 +247,7 @@ function DKP.BulkAdjustDKPDetailed(details, reason)
     end
     if #affected > 0 then
         table.insert(DKP.db.log, {
+            id = DKP.GenerateLogID(),
             type = "decay",
             players = affected,  -- 明细数组 {name, amount}
             amount = totalAmount,
@@ -258,6 +268,7 @@ function DKP.SetDKP(playerName, amount, reason)
     DKP.hasUnsavedChanges = true
     local logReason = reason or ("从 " .. old .. " 设置为 " .. amount)
     table.insert(DKP.db.log, {
+        id = DKP.GenerateLogID(),
         type = "set",
         player = DKP.GetDisplayName(playerName),
         amount = amount,
@@ -1174,6 +1185,7 @@ local function ImportLogData(text)
                     local key = ts .. ":" .. player .. ":" .. amount
                     if not existingTS[key] then
                         table.insert(DKP.db.log, {
+                            id = DKP.GenerateLogID(),
                             type = logType or "award",
                             player = player,
                             amount = amount,
@@ -1842,6 +1854,7 @@ local function SerializeLogEntry(entry)
         (entry.reason or ""):gsub(",", ";"),
         entry.officer or "",
         entry.reversed and "1" or "0",
+        entry.id or "",
     }, ",")
 end
 
@@ -2017,6 +2030,7 @@ function DKP.DeserializeActivity(text)
                     reason = (parts[5] or ""):gsub(";", ","),
                     officer = parts[6] or "",
                     reversed = parts[7] == "1",
+                    id = parts[8] and parts[8] ~= "" and parts[8] or nil,
                 }
                 local playerField = parts[3] or ""
                 if playerField:find(";") then
@@ -2689,6 +2703,7 @@ function DKP.ReverseLogEntry(logIndex)
                 table.insert(reversePlayers, type(d) == "table" and { name = d.name, amount = -d.amount } or name)
             end
             table.insert(DKP.db.log, {
+                id = DKP.GenerateLogID(),
                 type = "reverse",
                 players = reversePlayers,
                 amount = -entry.amount,
@@ -2711,6 +2726,7 @@ function DKP.ReverseLogEntry(logIndex)
                 table.insert(names, name)
             end
             table.insert(DKP.db.log, {
+                id = DKP.GenerateLogID(),
                 type = "reverse",
                 players = names,
                 amount = reverseAmount,
@@ -2723,9 +2739,13 @@ function DKP.ReverseLogEntry(logIndex)
         entry.reversed = true
         local count = type(entry.players[1]) == "table" and #entry.players or #entry.players
         DKP.Print("已冲红批量操作: " .. count .. " 人 (" .. (entry.reason or "") .. ")")
-        -- 广播 DKP 数据 + 冲红记录
-        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
-        if DKP.BroadcastReverse then DKP.BroadcastReverse(logIndex) end
+        -- 延迟广播（等 burst bucket 恢复）
+        C_Timer.After(2, function()
+            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        end)
+        C_Timer.After(3, function()
+            if DKP.BroadcastReverse then DKP.BroadcastReverse(entry.id) end
+        end)
     else
         -- 单人条目冲红（用 ResolvePlayerName 回找 DKP 玩家）
         local reverseAmount = -entry.amount
@@ -2736,7 +2756,8 @@ function DKP.ReverseLogEntry(logIndex)
             player.lastUpdated = time()
         end
 
-        table.insert(DKP.db.log, {
+        local reverseEntry = {
+            id = DKP.GenerateLogID(),
             type = "reverse",
             player = entry.player,
             amount = reverseAmount,
@@ -2744,15 +2765,20 @@ function DKP.ReverseLogEntry(logIndex)
             timestamp = time(),
             officer = DKP.playerName or "Unknown",
             reversedIndex = logIndex,
-        })
+        }
+        table.insert(DKP.db.log, reverseEntry)
         entry.reversed = true
 
         DKP.Print("已冲红: " .. entry.player .. " " ..
             (entry.amount >= 0 and "+" or "") .. entry.amount ..
             " DKP (" .. (entry.reason or "") .. ")")
-        -- 广播 DKP 数据 + 冲红记录
-        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
-        if DKP.BroadcastReverse then DKP.BroadcastReverse(logIndex) end
+        -- 延迟广播（等 burst bucket 恢复）
+        C_Timer.After(2, function()
+            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        end)
+        C_Timer.After(3, function()
+            if DKP.BroadcastReverse then DKP.BroadcastReverse(entry.id) end
+        end)
     end
     return true
 end
