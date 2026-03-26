@@ -1500,24 +1500,7 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
                     end
                 end
                 if found then
-                    -- 生成本地冲红记录
-                    local genID = DKP.GenerateLogID and DKP.GenerateLogID() or (time() .. "_" .. math.random(100000, 999999))
-                    local reverseEntry = {
-                        id = genID,
-                        type = "reverse",
-                        amount = -(foundEntry.amount or 0),
-                        reason = "冲红: " .. (foundEntry.reason or ""),
-                        timestamp = time(),
-                        officer = senderShort,
-                        reversedIndex = foundIndex,
-                    }
-                    -- 复制玩家信息
-                    if foundEntry.players then
-                        reverseEntry.players = foundEntry.players
-                    else
-                        reverseEntry.player = foundEntry.player
-                    end
-                    table.insert(DKP.db.log, reverseEntry)
+                    -- 只标记原条目为已冲红，reverse 条目由 LOG_ENTRY 同步过来
                     if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
                 end
             end
