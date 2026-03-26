@@ -1466,7 +1466,6 @@ end
 local commFrame = CreateFrame("Frame")
 commFrame:RegisterEvent("CHAT_MSG_ADDON")
 commFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
-local rosterDebounceTimer = nil  -- GROUP_ROSTER_UPDATE 防抖
 
 commFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "CHAT_MSG_ADDON" then
@@ -1550,32 +1549,14 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "GROUP_ROSTER_UPDATE" then
         if IsInRaid() or IsInGroup() then
-            if DKP.IsOfficer() then
-                -- 管理员自动切换到管理模式
-                if DKP.db and DKP.db.mode ~= "admin" then
-                    DKP.db.mode = "admin"
-                    DKP.Print("|cff00FF00检测到管理员身份，已自动切换到管理模式|r")
-                    if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
-                    if DKP.RefreshTableUI then DKP.RefreshTableUI() end
-                end
-                -- 管理员广播 admin 列表（防抖：5s 内多次触发只执行最后一次）
-                if rosterDebounceTimer then rosterDebounceTimer:Cancel() end
-                rosterDebounceTimer = C_Timer.NewTimer(5, function()
-                    rosterDebounceTimer = nil
-                    if DKP.IsOfficer() then
-                        DKP.BroadcastAdminSync()
-                    end
-                end)
-            else
-                -- 团员请求同步（防抖：5s 内多次触发只执行最后一次）
-                if rosterDebounceTimer then rosterDebounceTimer:Cancel() end
-                rosterDebounceTimer = C_Timer.NewTimer(5, function()
-                    rosterDebounceTimer = nil
-                    if not DKP.IsOfficer() then
-                        DKP.SendDKPMessage("SYNC_REQUEST")
-                    end
-                end)
+            -- 管理员自动切换到管理模式
+            if DKP.IsOfficer() and DKP.db and DKP.db.mode ~= "admin" then
+                DKP.db.mode = "admin"
+                DKP.Print("|cff00FF00检测到管理员身份，已自动切换到管理模式|r")
+                if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
+                if DKP.RefreshTableUI then DKP.RefreshTableUI() end
             end
+            -- 不再自动广播权限或请求同步（手动点"全量同步"或"同步DKP"）
         end
     end
 end)

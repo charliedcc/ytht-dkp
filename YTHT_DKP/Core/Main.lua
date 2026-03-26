@@ -311,9 +311,12 @@ local function CreateMainFrame()
     end)
     f.settingsBtn = settingsBtn
 
-    -- 关闭按钮
+    -- 关闭按钮（走 ToggleMainFrame 以触发未保存提示）
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function()
+        DKP.ToggleMainFrame()
+    end)
 
     -- ========== Tab 按钮 ==========
     local TAB_HEIGHT = 22
