@@ -1059,6 +1059,18 @@ syncFrame:SetScript("OnEvent", function(self, event, prefix, msg, channel, sende
                 tiedBidders = tiedBidders,
                 finalBid = finalBid,
             }
+            -- 延迟查找拍卖记录（等 BroadcastHistoryEntry 同步到达）
+            C_Timer.After(3, function()
+                if chatAuction and chatAuction.id then
+                    for _, entry in ipairs(DKP.db.auctionHistory or {}) do
+                        if entry.id == chatAuction.id then
+                            chatAuction.historyEntry = entry
+                            break
+                        end
+                    end
+                    DKP.RefreshChatAuctionPanel()
+                end
+            end)
             DKP.RefreshChatAuctionPanel()
             DKP.Print("聊天竞拍已结束 (由 " .. senderShort .. ")")
         end

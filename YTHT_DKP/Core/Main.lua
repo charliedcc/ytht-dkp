@@ -890,19 +890,19 @@ function DKP.RefreshTableUI()
                 text:SetTextColor(0.9, 0.7, 0.2)
                 instHeader.text = text
                 -- 删除副本按钮
-                local delBtn = CreateFrame("Button", nil, instHeader)
-                delBtn:SetSize(16, 16)
+                local delBtn = CreateFrame("Button", nil, instHeader, "UIPanelButtonTemplate")
+                delBtn:SetSize(40, 18)
                 delBtn:SetPoint("RIGHT", -4, 0)
+                delBtn:SetText("删除")
                 delBtn:SetNormalFontObject("GameFontNormalSmall")
-                local delText = delBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                delText:SetPoint("CENTER")
-                delText:SetText("|cffFF4444X|r")
-                delBtn:SetHighlightTexture("Interface/Buttons/UI-Panel-MinimizeButton-Highlight")
+                delBtn:SetHighlightFontObject("GameFontHighlightSmall")
+                delBtn:SetFrameLevel(instHeader:GetFrameLevel() + 10)
                 instHeader.delBtn = delBtn
                 f.instanceHeaders[instanceHeaderIndex] = instHeader
             end
             instHeader:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
             instHeader:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
+            instHeader:SetFrameLevel(scrollChild:GetFrameLevel() + 5)
             instHeader.text:SetText(sheetName)
             -- 绑定删除按钮事件（每次刷新重新绑定以捕获当前 sheetName）
             local currentSheetName = sheetName

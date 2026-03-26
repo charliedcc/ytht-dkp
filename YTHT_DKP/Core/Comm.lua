@@ -118,29 +118,37 @@ local function SerializePlayers()
     return table.concat(parts, "\n")
 end
 
+-- 返回 playersData, lastLogId
 local function DeserializePlayers(text)
     local result = {}
+    local lastLogId = nil
     for line in text:gmatch("[^\n]+") do
-        local parts = {}
-        for part in line:gmatch("[^,]+") do
-            table.insert(parts, part)
-        end
-        if #parts >= 2 then
-            local name = parts[1]
-            local dkp = tonumber(parts[2]) or 0
-            local characters = {}
-            if parts[3] and parts[3] ~= "" then
-                for charEntry in parts[3]:gmatch("[^;]+") do
-                    local charName, charClass = charEntry:match("^(.+):(.+)$")
-                    if charName then
-                        table.insert(characters, { name = charName, class = charClass })
+        -- 提取附带的 lastLogId 标记
+        local logId = line:match("^#lastLogId=(.*)$")
+        if logId then
+            lastLogId = logId ~= "" and logId or nil
+        else
+            local parts = {}
+            for part in line:gmatch("[^,]+") do
+                table.insert(parts, part)
+            end
+            if #parts >= 2 then
+                local name = parts[1]
+                local dkp = tonumber(parts[2]) or 0
+                local characters = {}
+                if parts[3] and parts[3] ~= "" then
+                    for charEntry in parts[3]:gmatch("[^;]+") do
+                        local charName, charClass = charEntry:match("^(.+):(.+)$")
+                        if charName then
+                            table.insert(characters, { name = charName, class = charClass })
+                        end
                     end
                 end
+                result[name] = { dkp = dkp, characters = characters }
             end
-            result[name] = { dkp = dkp, characters = characters }
         end
     end
-    return result
+    return result, lastLogId
 end
 
 ----------------------------------------------------------------------
@@ -338,7 +346,7 @@ local function HandleSyncChunk(parts, sender)
         if not IsTrustedSender(sender) then return end
 
         -- 应用同步数据
-        local playersData = DeserializePlayers(text)
+        local playersData, remoteLastLogId = DeserializePlayers(text)
         if not next(playersData) then return end
 
         local count = 0
@@ -363,8 +371,17 @@ local function HandleSyncChunk(parts, sender)
         end
 
         if DKP.IsAdminMode() then
+            -- 比较最后 log UUID：一致说明数据同步，静默接受；不一致才弹确认
+            local localLastLogId = nil
+            if DKP.db.log and #DKP.db.log > 0 then
+                localLastLogId = DKP.db.log[#DKP.db.log].id
+            end
+            if remoteLastLogId and localLastLogId == remoteLastLogId then
+                applySync()
+                return
+            end
             StaticPopup_Show("YTHT_DKP_SYNC_DKP",
-                format("收到来自 |cff00FF00%s|r 的 DKP 数据\n(%d 名玩家)\n\n是否覆盖本地数据？",
+                format("收到来自 |cff00FF00%s|r 的 DKP 数据\n(%d 名玩家)\n数据版本不一致，是否覆盖本地数据？",
                     GetShortName(sender), count),
                 nil, { apply = applySync })
         else
@@ -835,6 +852,12 @@ function DKP.BroadcastDKPData()
     if not channel then DKP.Print("不在队伍中"); return end
     local data = SerializePlayers()
     if data ~= "" then
+        -- 附带最后一条 log 的 UUID，接收方用于判断数据是否一致
+        local lastLogId = ""
+        if DKP.db.log and #DKP.db.log > 0 then
+            lastLogId = DKP.db.log[#DKP.db.log].id or ""
+        end
+        data = data .. "\n#lastLogId=" .. lastLogId
         SendChunked(DKP.ADDON_PREFIX, "SYNC_FULL", data, channel)
     end
 end
