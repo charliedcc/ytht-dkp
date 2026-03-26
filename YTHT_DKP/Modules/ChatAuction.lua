@@ -359,9 +359,18 @@ function DKP.EndChatAuction()
 
     local activeBids, passPlayers, winner, tiedBidders, finalBid = ComputeResult()
 
-    -- 构建历史 bids
-    local historyBids = {}
+    -- 构建历史 bids（每人只保留最终出价：sh 覆盖普通出价，pass 覆盖一切）
+    local lastBidByPlayer = {}
+    local bidOrder = {}
     for _, bid in ipairs(chatAuction.bids) do
+        if not lastBidByPlayer[bid.playerName] then
+            table.insert(bidOrder, bid.playerName)
+        end
+        lastBidByPlayer[bid.playerName] = bid
+    end
+    local historyBids = {}
+    for _, pn in ipairs(bidOrder) do
+        local bid = lastBidByPlayer[pn]
         table.insert(historyBids, {
             bidder = bid.charName,
             bidderPlayer = bid.playerName,
