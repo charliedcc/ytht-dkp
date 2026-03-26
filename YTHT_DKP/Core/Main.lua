@@ -889,11 +889,49 @@ function DKP.RefreshTableUI()
                 text:SetPoint("LEFT", 8, 0)
                 text:SetTextColor(0.9, 0.7, 0.2)
                 instHeader.text = text
+                -- 删除副本按钮
+                local delBtn = CreateFrame("Button", nil, instHeader)
+                delBtn:SetSize(16, 16)
+                delBtn:SetPoint("RIGHT", -4, 0)
+                delBtn:SetNormalFontObject("GameFontNormalSmall")
+                local delText = delBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                delText:SetPoint("CENTER")
+                delText:SetText("|cffFF4444X|r")
+                delBtn:SetHighlightTexture("Interface/Buttons/UI-Panel-MinimizeButton-Highlight")
+                instHeader.delBtn = delBtn
                 f.instanceHeaders[instanceHeaderIndex] = instHeader
             end
             instHeader:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, yOffset)
             instHeader:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
             instHeader.text:SetText(sheetName)
+            -- 绑定删除按钮事件（每次刷新重新绑定以捕获当前 sheetName）
+            local currentSheetName = sheetName
+            instHeader.delBtn:SetScript("OnClick", function()
+                if not DKP.IsOfficer or not DKP.IsOfficer() then
+                    DKP.Print("只有管理员可以删除副本")
+                    return
+                end
+                StaticPopupDialogs["YTHT_DKP_DELETE_SHEET"] = {
+                    text = "%s",
+                    button1 = "确定删除",
+                    button2 = "取消",
+                    OnAccept = function()
+                        DKP.db.sheets[currentSheetName] = nil
+                        DKP.hasUnsavedChanges = true
+                        DKP.Print("已删除副本: " .. currentSheetName)
+                        if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+                    end,
+                    timeout = 0,
+                    whileDead = true,
+                    hideOnEscape = true,
+                }
+                StaticPopup_Show("YTHT_DKP_DELETE_SHEET", "确定删除副本「" .. currentSheetName .. "」的全部掉落记录？\n\n此操作不可撤销。")
+            end)
+            if DKP.IsOfficer and DKP.IsOfficer() then
+                instHeader.delBtn:Show()
+            else
+                instHeader.delBtn:Hide()
+            end
             instHeader:Show()
             yOffset = yOffset - 22
 
