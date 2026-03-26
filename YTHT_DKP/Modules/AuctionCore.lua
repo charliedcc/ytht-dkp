@@ -430,12 +430,8 @@ function DKP.EndAuction(auctionID)
         -- 扣除DKP
         DKP.AdjustDKP(winnerPlayer, -finalBid, "拍卖: " .. (auction.itemLink or "物品"))
 
-        -- 广播DKP变动
-        local playerData = DKP.db.players[winnerPlayer]
-        if playerData and DKP.BroadcastDKPChange then
-            DKP.BroadcastDKPChange(winnerPlayer, playerData.dkp, -finalBid,
-                "拍卖: " .. (auction.itemLink or "物品"), time(), DKP.playerName)
-        end
+        -- 广播 DKP 全量数据（与批量操作一致）
+        if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
 
         local winnerClass = GetWinnerClass(winnerPlayer, winner)
 

@@ -334,6 +334,7 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
         -- 同步快捷引用回团队（防止归档等操作断开引用后数据丢失）
         local team = DKP.GetCurrentTeam()
         if team then
+            team.players = DKP.db.players
             team.log = DKP.db.log
             team.auctionHistory = DKP.db.auctionHistory
             team.sheets = DKP.db.sheets

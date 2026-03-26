@@ -176,7 +176,7 @@ function DKP.AdjustDKP(playerName, amount, reason)
     player.dkp = (player.dkp or 0) + amount
     player.lastUpdated = time()
     DKP.hasUnsavedChanges = true
-    table.insert(DKP.db.log, {
+    local logEntry = {
         id = DKP.GenerateLogID(),
         type = amount >= 0 and "award" or "deduct",
         player = DKP.GetDisplayName(playerName),
@@ -184,10 +184,15 @@ function DKP.AdjustDKP(playerName, amount, reason)
         reason = reason or "",
         timestamp = time(),
         officer = DKP.playerName or "Unknown",
-    })
-    -- 广播DKP变动
-    if DKP.BroadcastDKPChange then
-        DKP.BroadcastDKPChange(playerName, player.dkp, amount, reason or "")
+    }
+    table.insert(DKP.db.log, logEntry)
+    -- 广播日志 + DKP 数据
+    if DKP.BroadcastLogEntry then
+        DKP.BroadcastLogEntry(logEntry, function()
+            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        end)
+    elseif DKP.BroadcastDKPData then
+        DKP.BroadcastDKPData()
     end
     return true
 end
@@ -282,7 +287,7 @@ function DKP.SetDKP(playerName, amount, reason)
     player.lastUpdated = time()
     DKP.hasUnsavedChanges = true
     local logReason = reason or ("从 " .. old .. " 设置为 " .. amount)
-    table.insert(DKP.db.log, {
+    local logEntry = {
         id = DKP.GenerateLogID(),
         type = "set",
         player = DKP.GetDisplayName(playerName),
@@ -290,10 +295,15 @@ function DKP.SetDKP(playerName, amount, reason)
         reason = logReason,
         timestamp = time(),
         officer = DKP.playerName or "Unknown",
-    })
-    -- 广播DKP变动
-    if DKP.BroadcastDKPChange then
-        DKP.BroadcastDKPChange(playerName, amount, amount - old, logReason)
+    }
+    table.insert(DKP.db.log, logEntry)
+    -- 广播日志 + DKP 数据
+    if DKP.BroadcastLogEntry then
+        DKP.BroadcastLogEntry(logEntry, function()
+            if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+        end)
+    elseif DKP.BroadcastDKPData then
+        DKP.BroadcastDKPData()
     end
     return true
 end

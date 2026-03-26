@@ -536,12 +536,8 @@ function DKP.ConfirmChatAuctionEntry(entry)
         end
     end
 
-    -- 广播DKP变动
-    local playerData = DKP.db and DKP.db.players[entry.winner]
-    if playerData and DKP.BroadcastDKPChange then
-        DKP.BroadcastDKPChange(entry.winner, playerData.dkp, -entry.finalBid,
-            "聊天竞拍: " .. (entry.itemLink or "物品"), time(), DKP.playerName)
-    end
+    -- 广播 DKP 全量数据（与批量操作一致）
+    if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
 
     DKP.Print("竞拍已确认: " .. (entry.winnerChar or entry.winner) ..
         " 获得 " .. (entry.itemLink or "物品") .. " (" .. entry.finalBid .. " DKP)")

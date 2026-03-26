@@ -355,6 +355,8 @@ local function HandleSyncChunk(parts, sender)
                 }
             end
             DKP.db.players = newPlayers
+            local team = DKP.GetCurrentTeam and DKP.GetCurrentTeam()
+            if team then team.players = newPlayers end
             if DKP.RebuildCharLookup then DKP.RebuildCharLookup() end
             DKP.Print("已从 " .. GetShortName(sender) .. " 同步 DKP 数据 (" .. count .. " 名玩家)")
             if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
@@ -1213,6 +1215,8 @@ local function HandleLogChunk(parts, sender)
 
         local function applyLog()
             DKP.db.log = act.log
+            local team = DKP.GetCurrentTeam and DKP.GetCurrentTeam()
+            if team then team.log = act.log end
             DKP.Print("已同步操作记录 (" .. #act.log .. " 条, 来自 " .. GetShortName(s) .. ")")
             if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
         end
@@ -1234,6 +1238,8 @@ local function HandleAuctionHistChunk(parts, sender)
 
         local function applyHist()
             DKP.db.auctionHistory = act.auctionHistory
+            local team = DKP.GetCurrentTeam and DKP.GetCurrentTeam()
+            if team then team.auctionHistory = act.auctionHistory end
             DKP.Print("已同步拍卖记录 (" .. #act.auctionHistory .. " 条, 来自 " .. GetShortName(s) .. ")")
             if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
         end
@@ -1305,11 +1311,14 @@ local function HandleActivityChunk(parts, sender)
                 local histCount = #(act.auctionHistory or {})
 
                 local function applyActivity()
+                    local team = DKP.GetCurrentTeam and DKP.GetCurrentTeam()
                     if act.log and #act.log > 0 then
                         DKP.db.log = act.log
+                        if team then team.log = act.log end
                     end
                     if act.auctionHistory and #act.auctionHistory > 0 then
                         DKP.db.auctionHistory = act.auctionHistory
+                        if team then team.auctionHistory = act.auctionHistory end
                     end
                     DKP.Print("已同步活动数据 (来自 " .. senderShort .. "): " ..
                         logCount .. " 条日志, " .. histCount .. " 条拍卖")
@@ -1373,6 +1382,8 @@ local function HandleSheetsChunk(parts, sender)
         local function applySheets()
             -- 完全替换掉落列表（管理员数据为准）
             DKP.db.sheets = newSheets
+            local team = DKP.GetCurrentTeam and DKP.GetCurrentTeam()
+            if team then team.sheets = newSheets end
             DKP.Print("已同步掉落列表 (" .. sheetCount .. " 个副本, 来自 " .. senderShort .. ")")
             if DKP.RefreshTableUI then DKP.RefreshTableUI() end
         end
@@ -1441,7 +1452,7 @@ commFrame:SetScript("OnEvent", function(self, event, ...)
 
         -- 忽略自己发的消息（管理员端已处理）
         local myName = DKP.playerFullName or (DKP.playerName .. "-" .. GetRealmName())
-        if sender == myName or sender == DKP.playerName then return end
+        if sender == myName then return end
 
         local parts = { strsplit(MSG_SEP, msg) }
         local msgType = parts[1]

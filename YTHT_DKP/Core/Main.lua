@@ -712,9 +712,10 @@ local function SetItemRowData(row, itemData)
                     button1 = "确定撤销",
                     button2 = "取消",
                     OnAccept = function()
-                        -- 退还 DKP
-                        if dkpCost > 0 and DKP.db.players[winner] then
-                            DKP.AdjustDKP(winner, dkpCost, "撤销分配: " .. link)
+                        -- 退还 DKP（winner 可能是角色名，需要回查玩家名）
+                        local resolvedWinner = DKP.ResolvePlayerName and DKP.ResolvePlayerName(winner) or winner
+                        if dkpCost > 0 and DKP.db.players[resolvedWinner] then
+                            DKP.AdjustDKP(resolvedWinner, dkpCost, "撤销分配: " .. link)
                         end
                         -- 记录撤销到拍卖历史
                         local historyEntry = {
@@ -2238,6 +2239,76 @@ function DKP.OnInitialized()
                     DKP.Print("  /ytht debug chatauction off - 禁用")
                 end
 
+            elseif arg1 == "popup" then
+                -- 测试各种弹窗
+                if arg2 == "boss" then
+                    -- 模拟 Boss 击杀确认框
+                    if not DKP._bossKillConfirmDialog then
+                        DKP.Print("Boss击杀确认框尚未创建（需要先触发一次ENCOUNTER_END）")
+                    else
+                        local d = DKP._bossKillConfirmDialog
+                        d.text:SetText("测试Boss 击杀!\n全团 +5 DKP\n\n是否执行加分？")
+                        d.yesBtn:SetScript("OnClick", function()
+                            d:Hide()
+                            DKP.Print("测试: 点击了确定加分")
+                        end)
+                        d:Show()
+                        DKP.Print("Boss击杀确认框已显示")
+                    end
+                elseif arg2 == "static" then
+                    -- 测试 StaticPopup
+                    StaticPopupDialogs["YTHT_DKP_TEST_POPUP"] = {
+                        text = "%s",
+                        button1 = "确定",
+                        button2 = "取消",
+                        OnAccept = function() DKP.Print("测试: 点击了确定") end,
+                        timeout = 0,
+                        whileDead = true,
+                        hideOnEscape = true,
+                    }
+                    StaticPopup_Show("YTHT_DKP_TEST_POPUP", "这是一个测试弹窗\n包含换行和 100% 百分号")
+                    DKP.Print("StaticPopup 测试弹窗已触发")
+                elseif arg2 == "custom" then
+                    -- 测试自定义 Frame 弹窗（和 Boss 击杀用的同类型）
+                    local d = CreateFrame("Frame", "YTHTDKPTestDialog", UIParent, "BackdropTemplate")
+                    d:SetSize(320, 140)
+                    d:SetPoint("CENTER", 0, 100)
+                    d:SetFrameStrata("FULLSCREEN_DIALOG")
+                    d:SetFrameLevel(250)
+                    d:EnableMouse(true)
+                    d:SetBackdrop({
+                        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+                        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+                        edgeSize = 16,
+                        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+                    })
+                    d:SetBackdropColor(0.1, 0.1, 0.15, 0.95)
+                    local text = d:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                    text:SetPoint("TOP", 0, -12)
+                    text:SetWidth(290)
+                    text:SetText("这是自定义弹窗测试\nFrameStrata=FULLSCREEN_DIALOG\nFrameLevel=250")
+                    local yesBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                    yesBtn:SetSize(80, 24)
+                    yesBtn:SetPoint("BOTTOMLEFT", 20, 12)
+                    yesBtn:SetText("确定")
+                    yesBtn:SetScript("OnClick", function()
+                        d:Hide()
+                        DKP.Print("测试: 点击了确定")
+                    end)
+                    local noBtn = CreateFrame("Button", nil, d, "UIPanelButtonTemplate")
+                    noBtn:SetSize(80, 24)
+                    noBtn:SetPoint("BOTTOMRIGHT", -20, 12)
+                    noBtn:SetText("关闭")
+                    noBtn:SetScript("OnClick", function() d:Hide() end)
+                    d:Show()
+                    DKP.Print("自定义弹窗已显示")
+                else
+                    DKP.Print("弹窗测试:")
+                    DKP.Print("  /ytht debug popup boss    - 测试Boss击杀确认框")
+                    DKP.Print("  /ytht debug popup static  - 测试StaticPopup（含%符号）")
+                    DKP.Print("  /ytht debug popup custom  - 测试自定义Frame弹窗")
+                end
+
             else
                 DKP.Print("调试命令:")
                 DKP.Print("  /ytht debug additem    - 背包装备添加到掉落列表")
@@ -2245,6 +2316,7 @@ function DKP.OnInitialized()
                 DKP.Print("  /ytht debug fakeraid   - 添加自己到DKP名单")
                 DKP.Print("  /ytht debug reset      - 重置拍卖/session状态")
                 DKP.Print("  /ytht debug chatauction - 聊天自动竞拍开关")
+                DKP.Print("  /ytht debug popup      - 测试弹窗")
             end
 
         elseif cmd == "mode" then
