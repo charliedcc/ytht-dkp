@@ -204,11 +204,19 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
            and DKP.IsOfficer and DKP.IsOfficer()
            and DKP.IsAdminMode and DKP.IsAdminMode()
            and (not DKP.db or not DKP.db.options or DKP.db.options.enableChatAuction ~= false) then
-            local itemLink = msg:match("(|c.-|Hitem:.-|h.-|h|r)")
-            if itemLink then
-                local foundItem, foundBoss = FindItemInSheets(itemLink)
-                if foundItem then
-                    DKP.StartChatAuction(itemLink, foundItem, foundBoss)
+            -- 跳过插件自身产生的消息（拍卖结果、DKP通报等）
+            if msg:find("^%[竞拍")
+                or msg:find("^%[DKP%]")
+                or msg:find("^%[YTHT%-DKP%]")
+                or msg:find("^%[竞拍结束%]") then
+                -- 插件消息，不触发自动竞拍
+            else
+                local itemLink = msg:match("(|c.-|Hitem:.-|h.-|h|r)")
+                if itemLink then
+                    local foundItem, foundBoss = FindItemInSheets(itemLink)
+                    if foundItem then
+                        DKP.StartChatAuction(itemLink, foundItem, foundBoss)
+                    end
                 end
             end
         end

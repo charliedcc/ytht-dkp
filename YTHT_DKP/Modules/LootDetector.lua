@@ -325,9 +325,8 @@ f:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
-        -- 自动打开主界面（如果还没打开）
-        if DKP.MainFrame and not DKP.MainFrame:IsShown() then
-            DKP.MainFrame:Show()
+        -- 刷新界面（如果已打开）
+        if DKP.MainFrame and DKP.MainFrame:IsShown() then
             DKP.RefreshTableUI()
         end
 
