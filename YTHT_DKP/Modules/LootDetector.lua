@@ -41,7 +41,7 @@ local function UpdateInstanceInfo()
           maxPlayers, dynamicDifficulty, isDynamic, instanceID,
           instanceGroupSize, lfgDungeonID = GetInstanceInfo()
 
-    if instanceType == "raid" or instanceType == "party" then
+    if instanceType == "raid" then
         -- 构建副本显示名称（包含难度）
         local displayName = name
         if difficultyName and difficultyName ~= "" then
@@ -105,6 +105,9 @@ f:SetScript("OnEvent", function(self, event, ...)
     ----------------------------------------------------------------
     if event == "ENCOUNTER_END" then
         local encounterID, encounterName, difficultyID, groupSize, success = ...
+
+        -- 只在团本中处理（5人本不记录）
+        if not IsInRaid() then return end
 
         if success == 1 then
             -- 击杀成功
@@ -267,6 +270,9 @@ f:SetScript("OnEvent", function(self, event, ...)
     -- 拾取Roll开始 → 获取装备信息，记录到Boss表格
     ----------------------------------------------------------------
     if event == "START_LOOT_ROLL" then
+        -- 只在团本中记录掉落（5人本不记录）
+        if not IsInRaid() then return end
+
         local rollID, rollTime, lootHandle = ...
 
         -- 获取物品信息

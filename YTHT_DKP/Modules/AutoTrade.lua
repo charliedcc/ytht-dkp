@@ -25,40 +25,60 @@ f:RegisterEvent("TRADE_ACCEPT_UPDATE")
 
 f:SetScript("OnEvent", function(self, event, ...)
     if event == "TRADE_SHOW" then
+        DKP.Print("[交易DEBUG] TRADE_SHOW 触发")
+
         -- 只有管理模式触发自动交易
-        if not DKP.IsAdminMode or not DKP.IsAdminMode() then return end
-        if not DKP.db or not DKP.db.sheets then return end
+        if not DKP.IsAdminMode or not DKP.IsAdminMode() then
+            DKP.Print("[交易DEBUG] 非管理模式，跳过")
+            return
+        end
+        if not DKP.db or not DKP.db.sheets then
+            DKP.Print("[交易DEBUG] 无 sheets 数据，跳过")
+            return
+        end
 
         wipe(pendingTradeItems)
 
         local tradeName = GetTradePlayerName()
-        if not tradeName then return end
+        if not tradeName then
+            DKP.Print("[交易DEBUG] GetTradePlayerName 返回 nil")
+            return
+        end
 
         local tradeShort = tradeName
         local dashPos = tradeName:find("-", 1, true)
         if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
+        DKP.Print("[交易DEBUG] 交易对象: " .. tradeName .. " (短名: " .. tradeShort .. ")")
 
         -- 查找分配给该玩家且未交易的物品
         local itemsToTrade = {}
-        for _, sheet in pairs(DKP.db.sheets) do
+        local totalItems = 0
+        for sheetName, sheet in pairs(DKP.db.sheets) do
             for _, boss in ipairs(sheet.bosses or {}) do
                 for _, item in ipairs(boss.items or {}) do
-                    if item.winner and item.winner ~= "" and item.link and not item.traded then
-                        local winnerShort = item.winner
-                        local dp = item.winner:find("-", 1, true)
-                        if dp then winnerShort = item.winner:sub(1, dp - 1) end
+                    if item.winner and item.winner ~= "" and item.link then
+                        totalItems = totalItems + 1
+                        if not item.traded then
+                            local winnerShort = item.winner
+                            local dp = item.winner:find("-", 1, true)
+                            if dp then winnerShort = item.winner:sub(1, dp - 1) end
 
-                        if winnerShort == tradeShort or item.winner == tradeName then
-                            table.insert(itemsToTrade, {
-                                itemData = item,
-                                link = item.link,
-                                matchKey = GetItemMatchKey(item.link),
-                            })
+                            DKP.Print("[交易DEBUG] 检查: winner=" .. item.winner .. " vs trade=" .. tradeShort .. " traded=" .. tostring(item.traded))
+
+                            if winnerShort == tradeShort or item.winner == tradeName then
+                                table.insert(itemsToTrade, {
+                                    itemData = item,
+                                    link = item.link,
+                                    matchKey = GetItemMatchKey(item.link),
+                                })
+                                DKP.Print("[交易DEBUG] 匹配! " .. (item.link:match("%[(.-)%]") or item.link))
+                            end
                         end
                     end
                 end
             end
         end
+        DKP.Print("[交易DEBUG] 总已分配物品: " .. totalItems .. ", 匹配待交易: " .. #itemsToTrade)
 
         if #itemsToTrade == 0 then return end
 
@@ -66,7 +86,8 @@ f:SetScript("OnEvent", function(self, event, ...)
         local placed = 0
         local usedSlots = {}  -- 防止同一格子被匹配两次
 
-        for _, entry in ipairs(itemsToTrade) do
+        for idx, entry in ipairs(itemsToTrade) do
+            DKP.Print("[交易DEBUG] 搜索背包: " .. (entry.link:match("%[(.-)%]") or "?") .. " matchKey=" .. tostring(entry.matchKey))
             local found = false
             for bag = 0, 4 do
                 local numSlots = C_Container.GetContainerNumSlots(bag)

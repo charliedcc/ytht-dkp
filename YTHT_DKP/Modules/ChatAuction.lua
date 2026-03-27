@@ -199,7 +199,8 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
 
     -- ① 没有进行中的竞拍 → 检测管理员发送的装备链接，自动发起
     if not chatAuction then
-        if senderShort == DKP.playerName
+        local senderIsAdmin = DKP.db and DKP.db.admins and DKP.db.admins[senderShort]
+        if senderIsAdmin
            and DKP.IsOfficer and DKP.IsOfficer()
            and DKP.IsAdminMode and DKP.IsAdminMode()
            and (not DKP.db or not DKP.db.options or DKP.db.options.enableChatAuction ~= false) then
