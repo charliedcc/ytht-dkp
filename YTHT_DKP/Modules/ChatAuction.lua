@@ -197,8 +197,8 @@ chatFrame:RegisterEvent("CHAT_MSG_PARTY_LEADER")
 chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
     local senderShort = StripRealm(sender)
 
-    -- ① 没有进行中的竞拍 → 检测管理员发送的装备链接，自动发起
-    if not chatAuction then
+    -- ① 检测管理员发送的装备链接，自动发起（有进行中的拍卖会自动结束旧的）
+    if not chatAuction or chatAuction.state == "collecting" then
         local senderIsAdmin = DKP.db and DKP.db.admins and DKP.db.admins[senderShort]
         if senderIsAdmin
            and DKP.IsOfficer and DKP.IsOfficer()
@@ -213,14 +213,19 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
             else
                 local itemLink = msg:match("(|c.-|Hitem:.-|h.-|h|r)")
                 if itemLink then
-                    local foundItem, foundBoss = FindItemInSheets(itemLink)
-                    if foundItem then
-                        DKP.StartChatAuction(itemLink, foundItem, foundBoss)
+                    -- 如果是当前正在拍的同一件装备的链接，不重复触发
+                    if chatAuction and chatAuction.itemLink == itemLink then
+                        -- 同一件装备，跳过
+                    else
+                        local foundItem, foundBoss = FindItemInSheets(itemLink)
+                        if foundItem then
+                            DKP.StartChatAuction(itemLink, foundItem, foundBoss)
+                        end
                     end
                 end
             end
         end
-        return
+        if not chatAuction then return end
     end
 
     -- ② 竞价收集中 → 解析出价
@@ -412,6 +417,7 @@ function DKP.EndChatAuction()
     local historyEntry = {
         id = chatAuction.id,
         itemLink = chatAuction.itemLink,
+        itemData = chatAuction.itemData,  -- 掉落列表物品引用，供确认扣分时直接更新
         state = tiedBidders and "TIE" or (winner and "CHAT_PENDING" or "ENDED"),
         winner = winner and winner.playerName or nil,
         winnerChar = winner and winner.charName or nil,
@@ -530,7 +536,15 @@ function DKP.ConfirmChatAuctionEntry(entry)
     DKP.hasUnsavedChanges = true
 
     -- 更新掉落列表中对应物品
-    if entry.itemLink and DKP.db.sheets then
+    -- 优先用 itemData 引用直接更新（精确匹配），回退到 itemLink 搜索
+    local updated = false
+    if entry.itemData then
+        entry.itemData.winner = entry.winnerChar or entry.winner
+        entry.itemData.winnerClass = entry.winnerClass
+        entry.itemData.dkp = entry.finalBid
+        updated = true
+    end
+    if not updated and entry.itemLink and DKP.db.sheets then
         for _, sheet in pairs(DKP.db.sheets) do
             for _, boss in ipairs(sheet.bosses or {}) do
                 for _, item in ipairs(boss.items or {}) do
@@ -538,10 +552,13 @@ function DKP.ConfirmChatAuctionEntry(entry)
                         item.winner = entry.winnerChar or entry.winner
                         item.winnerClass = entry.winnerClass
                         item.dkp = entry.finalBid
+                        updated = true
                         break
                     end
                 end
+                if updated then break end
             end
+            if updated then break end
         end
     end
 
