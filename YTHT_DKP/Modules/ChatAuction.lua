@@ -218,6 +218,24 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
                         -- 同一件装备，跳过
                     else
                         local foundItem, foundBoss = FindItemInSheets(itemLink)
+                        if not foundItem and DKP.db.options and DKP.db.options.enableAutoAddItem then
+                            -- 自动添加到掉落列表
+                            local instanceName = DKP.db.currentSheet or "手动记录"
+                            if DKP.GetOrCreateSheet then DKP.GetOrCreateSheet(instanceName) end
+                            local bossName = "聊天拍卖"
+                            local encounterID = 99999
+                            if DKP.AddBossToSheet then
+                                foundBoss = DKP.AddBossToSheet(instanceName, bossName, encounterID)
+                            end
+                            if DKP.AddItemToBoss then
+                                local rollID = time() + math.random(10000)
+                                foundItem = DKP.AddItemToBoss(instanceName, encounterID, itemLink, rollID)
+                            end
+                            if foundItem then
+                                DKP.Print("自动添加装备到掉落列表: " .. (itemLink:match("%[(.-)%]") or itemLink))
+                                if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+                            end
+                        end
                         if foundItem then
                             DKP.StartChatAuction(itemLink, foundItem, foundBoss)
                         end

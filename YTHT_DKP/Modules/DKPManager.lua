@@ -1611,6 +1611,16 @@ function DKP.ShowSettingsDialog()
         d.chatAucBroadcastToggle = chatAucBroadcastToggle
         y = y - 28
 
+        local autoAddItemToggle = CreateFrame("CheckButton", nil, d, "UICheckButtonTemplate")
+        autoAddItemToggle:SetSize(24, 24)
+        autoAddItemToggle:SetPoint("TOPLEFT", 20, y)
+        local autoAddItemLabel = d:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        autoAddItemLabel:SetPoint("LEFT", autoAddItemToggle, "RIGHT", 2, 0)
+        autoAddItemLabel:SetText("聊天发装备自动加入掉落列表并拍卖")
+        autoAddItemLabel:SetTextColor(0.8, 0.8, 0.8)
+        d.autoAddItemToggle = autoAddItemToggle
+        y = y - 28
+
         d.durationBox = AddOption("拍卖时长", "auctionDuration", "秒")
         d.minBidBox = AddOption("最小加价", "minBidIncrement", "DKP")
         d.extendBox = AddOption("延时时间", "auctionExtendTime", "秒")
@@ -1741,6 +1751,7 @@ function DKP.ShowSettingsDialog()
     d.bossToggle:SetChecked(opts.enableBossKillBonus ~= false)
     d.chatAucToggle:SetChecked(opts.enableChatAuction ~= false)
     d.chatAucBroadcastToggle:SetChecked(opts.enableChatAuctionBroadcast ~= false)
+    d.autoAddItemToggle:SetChecked(opts.enableAutoAddItem == true)
     d.durationBox:SetText(tostring(opts.auctionDuration or 300))
     d.minBidBox:SetText(tostring(opts.minBidIncrement or 1))
     d.extendBox:SetText(tostring(opts.auctionExtendTime or 10))
@@ -1829,6 +1840,7 @@ function DKP.ShowSettingsDialog()
         opts.enableBossKillBonus = d.bossToggle:GetChecked()
         opts.enableChatAuction = d.chatAucToggle:GetChecked()
         opts.enableChatAuctionBroadcast = d.chatAucBroadcastToggle:GetChecked()
+        opts.enableAutoAddItem = d.autoAddItemToggle:GetChecked()
         opts.auctionDuration = tonumber(d.durationBox:GetText()) or opts.auctionDuration
         opts.minBidIncrement = tonumber(d.minBidBox:GetText()) or opts.minBidIncrement
         opts.auctionExtendTime = tonumber(d.extendBox:GetText()) or opts.auctionExtendTime
