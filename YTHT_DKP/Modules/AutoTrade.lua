@@ -63,9 +63,12 @@ f:SetScript("OnEvent", function(self, event, ...)
             return
         end
 
+        -- 提取纯角色名：去掉 "-服务器" 和 "(*)" 跨服标记
         local tradeShort = tradeName
-        local dashPos = tradeName:find("-", 1, true)
-        if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
+        tradeShort = tradeShort:gsub("%(%*%)", "")       -- 去掉 (*)
+        tradeShort = tradeShort:gsub("%s+$", "")         -- 去掉尾部空格
+        local dashPos = tradeShort:find("-", 1, true)
+        if dashPos then tradeShort = tradeShort:sub(1, dashPos - 1) end
         DKP.Print("[AutoTrade] trade partner: " .. tradeName .. " (short: " .. tradeShort .. ")")
 
         -- 查找分配给该玩家且未交易的物品
