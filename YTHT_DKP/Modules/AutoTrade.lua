@@ -28,40 +28,22 @@ f:RegisterEvent("TRADE_CLOSED")
 
 f:SetScript("OnEvent", function(self, event, ...)
     if event == "TRADE_SHOW" then
-        DKP.Print("[AutoTrade] TRADE_SHOW triggered, mode=" .. tostring(DKP.db and DKP.db.mode or "nil"))
-
         -- 只有管理模式触发自动交易
-        if not DKP.IsAdminMode or not DKP.IsAdminMode() then
-            DKP.Print("[AutoTrade] skip: not admin mode (mode=" .. tostring(DKP.db and DKP.db.mode or "nil") .. ")")
-            return
-        end
-        if not DKP.db or not DKP.db.sheets then
-            DKP.Print("[AutoTrade] skip: no sheets data")
-            return
-        end
+        if not DKP.IsAdminMode or not DKP.IsAdminMode() then return end
+        if not DKP.db or not DKP.db.sheets then return end
 
-        DKP.Print("[AutoTrade] admin check passed, sheets exist")
         wipe(pendingTradeItems)
 
-        -- GetTradePlayerName may not exist in some WoW versions; use pcall
-        local ok, tradeName
+        -- GetTradePlayerName may not exist in WoW 12.0; fallback to UI text
+        local tradeName
         if GetTradePlayerName then
-            ok, tradeName = pcall(GetTradePlayerName)
-            if not ok then
-                DKP.Print("[AutoTrade] ERROR: GetTradePlayerName() threw: " .. tostring(tradeName))
-                tradeName = nil
-            end
-        else
-            DKP.Print("[AutoTrade] WARNING: GetTradePlayerName is nil, trying TradeFrameRecipientNameText")
-            -- Fallback: read from trade frame UI
-            if TradeFrameRecipientNameText then
-                tradeName = TradeFrameRecipientNameText:GetText()
-            end
+            local ok, name = pcall(GetTradePlayerName)
+            if ok then tradeName = name end
         end
-        if not tradeName or tradeName == "" then
-            DKP.Print("[AutoTrade] skip: could not get trade partner name (GetTradePlayerName=" .. tostring(GetTradePlayerName) .. ")")
-            return
+        if not tradeName and TradeFrameRecipientNameText then
+            tradeName = TradeFrameRecipientNameText:GetText()
         end
+        if not tradeName or tradeName == "" then return end
 
         -- 提取纯角色名：去掉 "-服务器" 和 "(*)" 跨服标记
         local tradeShort = tradeName
@@ -69,37 +51,29 @@ f:SetScript("OnEvent", function(self, event, ...)
         tradeShort = tradeShort:gsub("%s+$", "")         -- 去掉尾部空格
         local dashPos = tradeShort:find("-", 1, true)
         if dashPos then tradeShort = tradeShort:sub(1, dashPos - 1) end
-        DKP.Print("[AutoTrade] trade partner: " .. tradeName .. " (short: " .. tradeShort .. ")")
 
         -- 查找分配给该玩家且未交易的物品
         local itemsToTrade = {}
-        local scannedItems = 0
         for sheetName, sheet in pairs(DKP.db.sheets) do
             for _, boss in ipairs(sheet.bosses or {}) do
                 for _, item in ipairs(boss.items or {}) do
-                    scannedItems = scannedItems + 1
                     if item.winner and item.winner ~= "" and item.link and not item.traded then
                         local winnerShort = item.winner
                         local dp = item.winner:find("-", 1, true)
                         if dp then winnerShort = item.winner:sub(1, dp - 1) end
 
-                        local itemName = item.link:match("%[(.-)%]") or item.link
                         if winnerShort == tradeShort or item.winner == tradeName then
-                            DKP.Print("[AutoTrade] match: " .. itemName .. " winner=" .. item.winner .. " (sheet: " .. sheetName .. ")")
                             table.insert(itemsToTrade, {
                                 itemData = item,
                                 link = item.link,
                                 matchKey = GetItemMatchKey(item.link),
                             })
-                        else
-                            DKP.Print("[AutoTrade] no match: " .. itemName .. " winner=" .. item.winner .. " vs trade=" .. tradeShort .. " (traded=" .. tostring(item.traded) .. ")")
                         end
                     end
                 end
             end
         end
 
-        DKP.Print("[AutoTrade] scanned " .. scannedItems .. " items, found " .. #itemsToTrade .. " to trade")
         if #itemsToTrade == 0 then return end
 
         -- 在背包里查找并放入交易窗
@@ -108,8 +82,6 @@ f:SetScript("OnEvent", function(self, event, ...)
 
         for i, entry in ipairs(itemsToTrade) do
             local found = false
-            local entryName = entry.link:match("%[(.-)%]") or entry.link
-            DKP.Print("[AutoTrade] searching bags for: " .. entryName .. " matchKey=" .. tostring(entry.matchKey))
             for bag = 0, 4 do
                 local numSlots = C_Container.GetContainerNumSlots(bag)
                 for slot = 1, numSlots do
@@ -127,17 +99,11 @@ f:SetScript("OnEvent", function(self, event, ...)
                                 local targetID = C_Item.GetItemInfoInstant(entry.link)
                                 local bagID = C_Item.GetItemInfoInstant(bagLink)
                                 isMatch = (targetID and bagID and targetID == bagID)
-                                if not isMatch then
-                                    DKP.Print("[AutoTrade] fallback miss: targetID=" .. tostring(targetID) .. " bagID=" .. tostring(bagID))
-                                end
                             end
 
                             if isMatch then
-                                DKP.Print("[AutoTrade] bag match found at bag=" .. bag .. " slot=" .. slot .. " placing to trade slot " .. (placed + 1))
                                 local tradeSlot = placed + 1
                                 C_Container.PickupContainerItem(bag, slot)
-                                -- Defer ClickTradeButton by one frame to ensure
-                                -- the cursor has picked up the item before placing
                                 C_Timer.After(0, function()
                                     ClickTradeButton(tradeSlot)
                                 end)
@@ -155,13 +121,9 @@ f:SetScript("OnEvent", function(self, event, ...)
                 end
                 if found then break end
             end
-            if not found then
-                DKP.Print("[AutoTrade] WARNING: " .. entryName .. " not found in bags!")
-            end
             if placed >= 6 then break end
         end
 
-        DKP.Print("[AutoTrade] summary: " .. #itemsToTrade .. " candidates, " .. placed .. " placed")
         if placed > 0 then
             DKP.Print("已放入 " .. placed .. " 件装备 (请手动确认交易)")
         end
@@ -184,7 +146,7 @@ f:SetScript("OnEvent", function(self, event, ...)
             or message == ERR_TRADE_TARGET_BAG_FULL then
             -- 交易失败，清空 pending 但不标记 traded
             if #pendingTradeItems > 0 then
-                DKP.Print("[AutoTrade] 交易失败 (" .. message .. ")，" .. #pendingTradeItems .. " 件装备未标记")
+                DKP.Print("交易失败，" .. #pendingTradeItems .. " 件装备未标记")
             end
             wipe(pendingTradeItems)
         end
@@ -192,15 +154,12 @@ f:SetScript("OnEvent", function(self, event, ...)
     elseif event == "TRADE_REQUEST_CANCEL" then
         -- 交易被取消
         if #pendingTradeItems > 0 then
-            DKP.Print("[AutoTrade] 交易取消，" .. #pendingTradeItems .. " 件装备未标记")
+            DKP.Print("交易取消，" .. #pendingTradeItems .. " 件装备未标记")
         end
         wipe(pendingTradeItems)
 
     elseif event == "TRADE_CLOSED" then
         -- 兜底 cleanup：交易窗口关闭
-        if #pendingTradeItems > 0 and not tradeCompleted then
-            DKP.Print("[AutoTrade] 交易窗口关闭（未检测到完成信号），" .. #pendingTradeItems .. " 件装备未标记")
-        end
         wipe(pendingTradeItems)
         tradeCompleted = false
     end
