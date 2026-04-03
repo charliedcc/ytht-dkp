@@ -26,128 +26,145 @@ f:RegisterEvent("UI_INFO_MESSAGE")
 f:RegisterEvent("TRADE_REQUEST_CANCEL")
 f:RegisterEvent("TRADE_CLOSED")
 
+local function HandleTradeShow()
+    DKP.Print("[AutoTrade] TRADE_SHOW triggered, mode=" .. tostring(DKP.db and DKP.db.mode or "nil"))
+
+    -- 只有管理模式触发自动交易
+    if not DKP.IsAdminMode or not DKP.IsAdminMode() then
+        DKP.Print("[AutoTrade] skip: not admin mode (mode=" .. tostring(DKP.db and DKP.db.mode or "nil") .. ")")
+        return
+    end
+    if not DKP.db or not DKP.db.sheets then
+        DKP.Print("[AutoTrade] skip: no sheets data")
+        return
+    end
+
+    local sheetCount = 0
+    for _ in pairs(DKP.db.sheets) do sheetCount = sheetCount + 1 end
+    DKP.Print("[AutoTrade] passed admin check, sheets=" .. sheetCount)
+
+    wipe(pendingTradeItems)
+    DKP.Print("[AutoTrade] pending items cleared")
+
+    DKP.Print("[AutoTrade] requesting trade target name")
+    local tradeName = GetTradePlayerName()
+    if not tradeName then
+        DKP.Print("[AutoTrade] skip: GetTradePlayerName() returned nil")
+        return
+    end
+
+    local tradeShort = tradeName
+    local dashPos = tradeName:find("-", 1, true)
+    if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
+    DKP.Print("[AutoTrade] trade partner: " .. tradeName .. " (short: " .. tradeShort .. ")")
+
+    -- 查找分配给该玩家且未交易的物品
+    local itemsToTrade = {}
+    local scannedItems = 0
+    local assignedItems = 0
+    for sheetName, sheet in pairs(DKP.db.sheets) do
+        for _, boss in ipairs(sheet.bosses or {}) do
+            for _, item in ipairs(boss.items or {}) do
+                scannedItems = scannedItems + 1
+                if item.winner and item.winner ~= "" and item.link and not item.traded then
+                    assignedItems = assignedItems + 1
+                    local winnerShort = item.winner
+                    local dp = item.winner:find("-", 1, true)
+                    if dp then winnerShort = item.winner:sub(1, dp - 1) end
+
+                    local itemName = item.link:match("%[(.-)%]") or item.link
+                    if winnerShort == tradeShort or item.winner == tradeName then
+                        DKP.Print("[AutoTrade] match: " .. itemName .. " winner=" .. item.winner .. " (sheet: " .. sheetName .. ")")
+                        table.insert(itemsToTrade, {
+                            itemData = item,
+                            link = item.link,
+                            matchKey = GetItemMatchKey(item.link),
+                        })
+                    else
+                        DKP.Print("[AutoTrade] no match: " .. itemName .. " winner=" .. item.winner .. " vs trade=" .. tradeShort .. " (traded=" .. tostring(item.traded) .. ")")
+                    end
+                end
+            end
+        end
+    end
+
+    DKP.Print("[AutoTrade] scanned " .. scannedItems .. " items, assigned/untraded=" .. assignedItems .. ", found " .. #itemsToTrade .. " to trade")
+    if #itemsToTrade == 0 then
+        DKP.Print("[AutoTrade] skip: no trade candidates matched current partner")
+        return
+    end
+
+    -- 在背包里查找并放入交易窗
+    local placed = 0
+    local usedSlots = {}  -- 防止同一格子被匹配两次
+
+    for _, entry in ipairs(itemsToTrade) do
+        local found = false
+        local entryName = entry.link:match("%[(.-)%]") or entry.link
+        DKP.Print("[AutoTrade] searching bags for: " .. entryName .. " matchKey=" .. tostring(entry.matchKey))
+        for bag = 0, 4 do
+            local numSlots = C_Container.GetContainerNumSlots(bag)
+            for slot = 1, numSlots do
+                local slotKey = bag .. ":" .. slot
+                if not usedSlots[slotKey] then
+                    local bagLink = C_Container.GetContainerItemLink(bag, slot)
+                    if bagLink then
+                        -- 优先用完整 itemString 匹配（区分属性）
+                        local bagMatchKey = GetItemMatchKey(bagLink)
+                        local isMatch = false
+                        if entry.matchKey and bagMatchKey then
+                            isMatch = (entry.matchKey == bagMatchKey)
+                        else
+                            -- fallback: itemID 匹配
+                            local targetID = C_Item.GetItemInfoInstant(entry.link)
+                            local bagID = C_Item.GetItemInfoInstant(bagLink)
+                            isMatch = (targetID and bagID and targetID == bagID)
+                            if not isMatch then
+                                DKP.Print("[AutoTrade] fallback miss: targetID=" .. tostring(targetID) .. " bagID=" .. tostring(bagID))
+                            end
+                        end
+
+                        if isMatch then
+                            DKP.Print("[AutoTrade] bag match found at bag=" .. bag .. " slot=" .. slot .. " placing to trade slot " .. (placed + 1))
+                            local tradeSlot = placed + 1
+                            C_Container.PickupContainerItem(bag, slot)
+                            -- Defer ClickTradeButton by one frame to ensure
+                            -- the cursor has picked up the item before placing
+                            C_Timer.After(0, function()
+                                ClickTradeButton(tradeSlot)
+                            end)
+                            placed = placed + 1
+                            found = true
+                            usedSlots[slotKey] = true
+                            table.insert(pendingTradeItems, entry.itemData)
+
+                            local itemName = bagLink:match("%[(.-)%]") or bagLink
+                            DKP.Print("自动交易: " .. itemName .. " → " .. tradeShort)
+                            break
+                        end
+                    end
+                end
+            end
+            if found then break end
+        end
+        if not found then
+            DKP.Print("[AutoTrade] WARNING: " .. entryName .. " not found in bags!")
+        end
+        if placed >= 6 then break end
+    end
+
+    DKP.Print("[AutoTrade] summary: " .. #itemsToTrade .. " candidates, " .. placed .. " placed")
+    if placed > 0 then
+        DKP.Print("已放入 " .. placed .. " 件装备 (请手动确认交易)")
+    end
+end
+
 f:SetScript("OnEvent", function(self, event, ...)
     if event == "TRADE_SHOW" then
-        DKP.Print("[AutoTrade] TRADE_SHOW triggered, mode=" .. tostring(DKP.db and DKP.db.mode or "nil"))
-
-        -- 只有管理模式触发自动交易
-        if not DKP.IsAdminMode or not DKP.IsAdminMode() then
-            DKP.Print("[AutoTrade] skip: not admin mode (mode=" .. tostring(DKP.db and DKP.db.mode or "nil") .. ")")
-            return
+        local ok, err = xpcall(HandleTradeShow, debug.traceback)
+        if not ok then
+            DKP.Print("[AutoTrade] ERROR in TRADE_SHOW: " .. tostring(err))
         end
-        if not DKP.db or not DKP.db.sheets then
-            DKP.Print("[AutoTrade] skip: no sheets data")
-            return
-        end
-
-        wipe(pendingTradeItems)
-
-        local tradeName = GetTradePlayerName()
-        if not tradeName then
-            DKP.Print("[AutoTrade] skip: GetTradePlayerName() returned nil")
-            return
-        end
-
-        local tradeShort = tradeName
-        local dashPos = tradeName:find("-", 1, true)
-        if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
-        DKP.Print("[AutoTrade] trade partner: " .. tradeName .. " (short: " .. tradeShort .. ")")
-
-        -- 查找分配给该玩家且未交易的物品
-        local itemsToTrade = {}
-        local scannedItems = 0
-        for sheetName, sheet in pairs(DKP.db.sheets) do
-            for _, boss in ipairs(sheet.bosses or {}) do
-                for _, item in ipairs(boss.items or {}) do
-                    scannedItems = scannedItems + 1
-                    if item.winner and item.winner ~= "" and item.link and not item.traded then
-                        local winnerShort = item.winner
-                        local dp = item.winner:find("-", 1, true)
-                        if dp then winnerShort = item.winner:sub(1, dp - 1) end
-
-                        local itemName = item.link:match("%[(.-)%]") or item.link
-                        if winnerShort == tradeShort or item.winner == tradeName then
-                            DKP.Print("[AutoTrade] match: " .. itemName .. " winner=" .. item.winner .. " (sheet: " .. sheetName .. ")")
-                            table.insert(itemsToTrade, {
-                                itemData = item,
-                                link = item.link,
-                                matchKey = GetItemMatchKey(item.link),
-                            })
-                        else
-                            DKP.Print("[AutoTrade] no match: " .. itemName .. " winner=" .. item.winner .. " vs trade=" .. tradeShort .. " (traded=" .. tostring(item.traded) .. ")")
-                        end
-                    end
-                end
-            end
-        end
-
-        DKP.Print("[AutoTrade] scanned " .. scannedItems .. " items, found " .. #itemsToTrade .. " to trade")
-        if #itemsToTrade == 0 then return end
-
-        -- 在背包里查找并放入交易窗
-        local placed = 0
-        local usedSlots = {}  -- 防止同一格子被匹配两次
-
-        for i, entry in ipairs(itemsToTrade) do
-            local found = false
-            local entryName = entry.link:match("%[(.-)%]") or entry.link
-            DKP.Print("[AutoTrade] searching bags for: " .. entryName .. " matchKey=" .. tostring(entry.matchKey))
-            for bag = 0, 4 do
-                local numSlots = C_Container.GetContainerNumSlots(bag)
-                for slot = 1, numSlots do
-                    local slotKey = bag .. ":" .. slot
-                    if not usedSlots[slotKey] then
-                        local bagLink = C_Container.GetContainerItemLink(bag, slot)
-                        if bagLink then
-                            -- 优先用完整 itemString 匹配（区分属性）
-                            local bagMatchKey = GetItemMatchKey(bagLink)
-                            local isMatch = false
-                            if entry.matchKey and bagMatchKey then
-                                isMatch = (entry.matchKey == bagMatchKey)
-                            else
-                                -- fallback: itemID 匹配
-                                local targetID = C_Item.GetItemInfoInstant(entry.link)
-                                local bagID = C_Item.GetItemInfoInstant(bagLink)
-                                isMatch = (targetID and bagID and targetID == bagID)
-                                if not isMatch then
-                                    DKP.Print("[AutoTrade] fallback miss: targetID=" .. tostring(targetID) .. " bagID=" .. tostring(bagID))
-                                end
-                            end
-
-                            if isMatch then
-                                DKP.Print("[AutoTrade] bag match found at bag=" .. bag .. " slot=" .. slot .. " placing to trade slot " .. (placed + 1))
-                                local tradeSlot = placed + 1
-                                C_Container.PickupContainerItem(bag, slot)
-                                -- Defer ClickTradeButton by one frame to ensure
-                                -- the cursor has picked up the item before placing
-                                C_Timer.After(0, function()
-                                    ClickTradeButton(tradeSlot)
-                                end)
-                                placed = placed + 1
-                                found = true
-                                usedSlots[slotKey] = true
-                                table.insert(pendingTradeItems, entry.itemData)
-
-                                local itemName = bagLink:match("%[(.-)%]") or bagLink
-                                DKP.Print("自动交易: " .. itemName .. " → " .. tradeShort)
-                                break
-                            end
-                        end
-                    end
-                end
-                if found then break end
-            end
-            if not found then
-                DKP.Print("[AutoTrade] WARNING: " .. entryName .. " not found in bags!")
-            end
-            if placed >= 6 then break end
-        end
-
-        DKP.Print("[AutoTrade] summary: " .. #itemsToTrade .. " candidates, " .. placed .. " placed")
-        if placed > 0 then
-            DKP.Print("已放入 " .. placed .. " 件装备 (请手动确认交易)")
-        end
-
     elseif event == "UI_INFO_MESSAGE" then
         local _, message = ...
         if message == ERR_TRADE_COMPLETE then

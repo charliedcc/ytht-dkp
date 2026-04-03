@@ -106,6 +106,36 @@ local function GetCurrentHighestBid()
     return highest
 end
 
+local function ResolveCharacterClass(charName, playerName, fallbackClass)
+    if DKP.db and DKP.db.players then
+        local resolvedPlayer = playerName
+        if (not resolvedPlayer or resolvedPlayer == "") and DKP.GetPlayerByCharacter then
+            resolvedPlayer = DKP.GetPlayerByCharacter(charName)
+        end
+
+        if resolvedPlayer and DKP.db.players[resolvedPlayer] then
+            for _, char in ipairs(DKP.db.players[resolvedPlayer].characters or {}) do
+                if char.name == charName then
+                    return char.class or fallbackClass or "WARRIOR"
+                end
+            end
+        end
+
+        if charName and DKP.GetPlayerByCharacter then
+            local mappedPlayer = DKP.GetPlayerByCharacter(charName)
+            if mappedPlayer and DKP.db.players[mappedPlayer] then
+                for _, char in ipairs(DKP.db.players[mappedPlayer].characters or {}) do
+                    if char.name == charName then
+                        return char.class or fallbackClass or "WARRIOR"
+                    end
+                end
+            end
+        end
+    end
+
+    return fallbackClass or "WARRIOR"
+end
+
 local function BuildDisplayResultFromHistoryEntry(entry)
     local activeBids = {}
     local passPlayers = {}
@@ -121,7 +151,11 @@ local function BuildDisplayResultFromHistoryEntry(entry)
         local displayBid = {
             charName = bid.bidder or bid.bidderPlayer or "?",
             playerName = bid.bidderPlayer or bid.bidder or "?",
-            charClass = bid.bidderClass or entry.winnerClass or "WARRIOR",
+            charClass = ResolveCharacterClass(
+                bid.bidder or bid.bidderPlayer,
+                bid.bidderPlayer,
+                bid.bidderClass
+            ),
             bidType = bid.bidType,
             amount = bid.amount or 0,
             isAllIn = bid.isAllIn and true or false,
@@ -146,14 +180,14 @@ local function BuildDisplayResultFromHistoryEntry(entry)
             table.insert(tiedBidders, {
                 charName = tb.name or tb.playerName or "?",
                 playerName = tb.playerName or tb.name or "?",
-                charClass = entry.winnerClass or "WARRIOR",
+                charClass = ResolveCharacterClass(tb.name or tb.playerName, tb.playerName),
             })
         end
     elseif entry.winner then
         winner = {
             charName = entry.winnerChar or entry.winner,
             playerName = entry.winner,
-            charClass = entry.winnerClass or "WARRIOR",
+            charClass = ResolveCharacterClass(entry.winnerChar or entry.winner, entry.winner, entry.winnerClass),
             amount = finalBid,
             isAllIn = false,
         }
