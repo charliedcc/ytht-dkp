@@ -253,6 +253,26 @@ local function RecordChatAuctionBid(sender, msg, timestamp, isLocalPreview)
     return true
 end
 
+local function TryRecordLocalOutgoingBid(msg, chatType)
+    if not chatAuction or chatAuction.state ~= "collecting" then return end
+    if not msg or msg == "" then return end
+    if chatType ~= "RAID" and chatType ~= "RAID_LEADER"
+        and chatType ~= "PARTY" and chatType ~= "PARTY_LEADER" then
+        return
+    end
+
+    -- Ignore addon-generated helper messages and only mirror actual bids.
+    if msg:find("^%[竞拍") or msg:find("^%[DKP%]") or msg:find("^%[YTHT%-DKP%]") then
+        return
+    end
+
+    RecordChatAuctionBid(GetLocalFullPlayerName(), msg, time(), true)
+end
+
+hooksecurefunc("SendChatMessage", function(msg, chatType)
+    TryRecordLocalOutgoingBid(msg, chatType)
+end)
+
 ----------------------------------------------------------------------
 -- 在掉落列表中查找装备（精确匹配优先，item ID 兜底）
 ----------------------------------------------------------------------
