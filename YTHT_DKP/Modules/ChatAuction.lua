@@ -391,6 +391,16 @@ local function FindLiveItemForChatAuctionEntry(entry)
         or searchItems(false, false, false)
 end
 
+local function FindAuctionHistoryEntryByID(entryID)
+    if not entryID or not DKP.db or not DKP.db.auctionHistory then return nil end
+    for _, historyEntry in ipairs(DKP.db.auctionHistory) do
+        if historyEntry.id == entryID then
+            return historyEntry
+        end
+    end
+    return nil
+end
+
 ----------------------------------------------------------------------
 -- 计算当前竞拍结果（每人取最后一次动作）
 ----------------------------------------------------------------------
@@ -705,11 +715,18 @@ function DKP.CancelChatAuction()
 end
 
 ----------------------------------------------------------------------
+-- 隐藏面板（竞拍继续进行）
+----------------------------------------------------------------------
+local function HideChatAuctionPanel()
+    if panel then panel:Hide() end
+end
+
+----------------------------------------------------------------------
 -- 关闭面板（结束后）
 ----------------------------------------------------------------------
 local function CloseChatAuctionPanel()
     chatAuction = nil
-    if panel then panel:Hide() end
+    HideChatAuctionPanel()
 end
 
 ----------------------------------------------------------------------
@@ -720,51 +737,65 @@ function DKP.ConfirmChatAuctionEntry(entry)
         DKP.Print("只有管理员可确认聊天竞拍扣分")
         return
     end
-    if not entry or entry.state ~= "CHAT_PENDING" then return end
-    if not entry.winner or not entry.finalBid or entry.finalBid <= 0 then
+    local liveEntry = entry and (FindAuctionHistoryEntryByID(entry.id) or entry) or nil
+    if not liveEntry or liveEntry.state ~= "CHAT_PENDING" then return end
+    if liveEntry.confirming then return end
+    if not liveEntry.winner or not liveEntry.finalBid or liveEntry.finalBid <= 0 then
         DKP.Print("无法确认: 没有获胜者或出价为0")
         return
     end
+    liveEntry.confirming = true
 
     -- 校验获胜者是否在DKP系统中
-    local playerData = DKP.db and DKP.db.players[entry.winner]
+    local playerData = DKP.db and DKP.db.players[liveEntry.winner]
     if not playerData then
-        DKP.Print("|cffFF0000无法确认: 玩家 " .. entry.winner .. " 不在DKP名单中|r")
+        liveEntry.confirming = nil
+        DKP.Print("|cffFF0000无法确认: 玩家 " .. liveEntry.winner .. " 不在DKP名单中|r")
         return
     end
 
     -- 拒绝扣成负数
     local currentDKP = playerData.dkp or 0
-    if entry.finalBid > currentDKP then
-        DKP.Print("|cffFF0000无法确认: " .. entry.winner .. " 当前DKP=" .. currentDKP
-            .. "，不足以扣除 " .. entry.finalBid .. "|r")
+    if liveEntry.finalBid > currentDKP then
+        liveEntry.confirming = nil
+        DKP.Print("|cffFF0000无法确认: " .. liveEntry.winner .. " 当前DKP=" .. currentDKP
+            .. "，不足以扣除 " .. liveEntry.finalBid .. "|r")
         return
     end
 
     -- 扣除DKP
-    local targetItem = FindLiveItemForChatAuctionEntry(entry)
+    local targetItem = FindLiveItemForChatAuctionEntry(liveEntry)
     if not targetItem then
+        liveEntry.confirming = nil
         DKP.Print("|cffFF0000无法确认: 找不到对应掉落记录，已取消扣分以避免数据不一致|r")
         return
     end
 
-    DKP.AdjustDKP(entry.winner, -entry.finalBid, "聊天竞拍: " .. (entry.itemLink or "物品"))
-
-    entry.state = "ENDED"
+    liveEntry.state = "ENDED"
+    if entry and entry ~= liveEntry then
+        entry.state = "ENDED"
+    end
     DKP.hasUnsavedChanges = true
+    if DKP.BroadcastHistoryEntry then DKP.BroadcastHistoryEntry(liveEntry) end
+
+    DKP.AdjustDKP(liveEntry.winner, -liveEntry.finalBid, "聊天竞拍: " .. (liveEntry.itemLink or "物品"))
 
     -- 始终更新当前 sheets 中的 live item，避免 history 里保存的旧引用失效。
-    targetItem.winner = entry.winnerChar or entry.winner
-    targetItem.winnerClass = entry.winnerClass
-    targetItem.dkp = entry.finalBid
-    entry.itemData = targetItem
+    targetItem.winner = liveEntry.winnerChar or liveEntry.winner
+    targetItem.winnerClass = liveEntry.winnerClass
+    targetItem.dkp = liveEntry.finalBid
+    liveEntry.itemData = targetItem
+    if entry and entry ~= liveEntry then
+        entry.itemData = targetItem
+    end
 
     -- 广播 DKP 全量数据（与批量操作一致）
     if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
     if DKP.BroadcastSheets then DKP.BroadcastSheets() end
+    liveEntry.confirming = nil
 
-    DKP.Print("竞拍已确认: " .. (entry.winnerChar or entry.winner) ..
-        " 获得 " .. (entry.itemLink or "物品") .. " (" .. entry.finalBid .. " DKP)")
+    DKP.Print("竞拍已确认: " .. (liveEntry.winnerChar or liveEntry.winner) ..
+        " 获得 " .. (liveEntry.itemLink or "物品") .. " (" .. liveEntry.finalBid .. " DKP)")
 
     if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
     if DKP.RefreshDKPUI then DKP.RefreshDKPUI() end
@@ -812,7 +843,7 @@ local function CreatePanel()
     closeBtn:SetPoint("TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function()
         if chatAuction and chatAuction.state == "collecting" then
-            DKP.CancelChatAuction()
+            HideChatAuctionPanel()
         else
             CloseChatAuctionPanel()
         end

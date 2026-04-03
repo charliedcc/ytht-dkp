@@ -761,9 +761,28 @@ local function HandleHistoryChunk(parts, sender)
         if encounterName == "" then encounterName = nil end
         if instanceName == "" then instanceName = nil end
 
-        -- 去重
+        local isChatAuction = entryId:match("^chat_") ~= nil
+
+        -- 已存在则更新，而不是直接丢弃
         for _, existing in ipairs(DKP.db.auctionHistory) do
             if existing.id and existing.id == entryId and entryId ~= "" then
+                existing.itemLink = itemLink
+                existing.state = state
+                existing.winner = winner
+                existing.winnerChar = winnerChar
+                existing.winnerClass = winnerClass
+                existing.finalBid = finalBid
+                existing.startBid = startBid
+                existing.bidCount = bidCount
+                existing.bids = bids
+                existing.tiedBidders = tiedBidders
+                existing.timestamp = timestamp
+                existing.officer = officer
+                existing.encounterName = encounterName
+                existing.instanceName = instanceName
+                existing.isChatAuction = existing.isChatAuction or isChatAuction
+                existing.confirming = nil
+                if DKP.RefreshAuctionLogUI then DKP.RefreshAuctionLogUI() end
                 return
             end
         end
@@ -813,6 +832,7 @@ local function HandleHistoryChunk(parts, sender)
             officer = officer,
             encounterName = encounterName,
             instanceName = instanceName,
+            isChatAuction = isChatAuction,
         }
         table.insert(DKP.db.auctionHistory, entry)
 
