@@ -20,6 +20,21 @@ local function GetItemMatchKey(itemLink)
     return itemString
 end
 
+local function NormalizeTradeName(name)
+    if not name or name == "" then return name end
+
+    local normalized = name
+    local dashPos = normalized:find("-", 1, true)
+    if dashPos then
+        normalized = normalized:sub(1, dashPos - 1)
+    end
+
+    -- Some trade-frame fallbacks include markers like "(*)" after the name.
+    normalized = normalized:gsub("%s*%b()$", "")
+    normalized = normalized:gsub("^%s+", ""):gsub("%s+$", "")
+    return normalized
+end
+
 local f = CreateFrame("Frame")
 f:RegisterEvent("TRADE_SHOW")
 f:RegisterEvent("UI_INFO_MESSAGE")
@@ -63,10 +78,8 @@ f:SetScript("OnEvent", function(self, event, ...)
             return
         end
 
-        local tradeShort = tradeName
-        local dashPos = tradeName:find("-", 1, true)
-        if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
-        DKP.Print("[AutoTrade] trade partner: " .. tradeName .. " (short: " .. tradeShort .. ")")
+        local tradeShort = NormalizeTradeName(tradeName)
+        DKP.Print("[AutoTrade] trade partner: " .. tradeName .. " (normalized: " .. tostring(tradeShort) .. ")")
 
         -- 查找分配给该玩家且未交易的物品
         local itemsToTrade = {}
@@ -76,20 +89,18 @@ f:SetScript("OnEvent", function(self, event, ...)
                 for _, item in ipairs(boss.items or {}) do
                     scannedItems = scannedItems + 1
                     if item.winner and item.winner ~= "" and item.link and not item.traded then
-                        local winnerShort = item.winner
-                        local dp = item.winner:find("-", 1, true)
-                        if dp then winnerShort = item.winner:sub(1, dp - 1) end
+                        local winnerShort = NormalizeTradeName(item.winner)
 
                         local itemName = item.link:match("%[(.-)%]") or item.link
                         if winnerShort == tradeShort or item.winner == tradeName then
-                            DKP.Print("[AutoTrade] match: " .. itemName .. " winner=" .. item.winner .. " (sheet: " .. sheetName .. ")")
+                            DKP.Print("[AutoTrade] match: " .. itemName .. " winner=" .. item.winner .. " (normalized: " .. tostring(winnerShort) .. ", sheet: " .. sheetName .. ")")
                             table.insert(itemsToTrade, {
                                 itemData = item,
                                 link = item.link,
                                 matchKey = GetItemMatchKey(item.link),
                             })
                         else
-                            DKP.Print("[AutoTrade] no match: " .. itemName .. " winner=" .. item.winner .. " vs trade=" .. tradeShort .. " (traded=" .. tostring(item.traded) .. ")")
+                            DKP.Print("[AutoTrade] no match: " .. itemName .. " winner=" .. item.winner .. " (normalized: " .. tostring(winnerShort) .. ") vs trade=" .. tostring(tradeShort) .. " (traded=" .. tostring(item.traded) .. ")")
                         end
                     end
                 end
