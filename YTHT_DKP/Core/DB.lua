@@ -7,7 +7,7 @@ YTHT_DKP = YTHT_DKP or {}
 local DKP = YTHT_DKP
 
 -- 版本
-DKP.version = "1.0.7"
+DKP.version = "1.0.8"
 DKP.addonName = "YTHT_DKP"
 
 -- 插件通信前缀
