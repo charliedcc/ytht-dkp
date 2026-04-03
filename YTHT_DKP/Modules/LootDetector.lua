@@ -26,6 +26,66 @@ local currentInstance = {
     id = nil,
 }
 
+local function GetShortName(name)
+    return name and name:match("^([^%-]+)") or name
+end
+
+local function GetOnlineGroupMembersInOrder()
+    local members = {}
+
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            local name, _, _, _, _, _, _, online = GetRaidRosterInfo(i)
+            if name and online then
+                table.insert(members, GetShortName(name))
+            end
+        end
+    elseif IsInGroup() then
+        table.insert(members, DKP.playerName or UnitName("player"))
+        for i = 1, GetNumGroupMembers() - 1 do
+            local unit = "party" .. i
+            local name = UnitName(unit)
+            if name and UnitIsConnected(unit) then
+                table.insert(members, GetShortName(name))
+            end
+        end
+    else
+        table.insert(members, DKP.playerName or UnitName("player"))
+    end
+
+    return members
+end
+
+local function GetLootBroadcastOwner()
+    if not DKP.IsOfficer or not DKP.IsOfficer() then return nil end
+
+    local team = DKP.GetCurrentTeam and DKP.GetCurrentTeam()
+    if not team or not team.admins or not next(team.admins) then
+        return DKP.playerName
+    end
+
+    local masterAdmin = team.masterAdmin
+    local fallbackAdmin = nil
+
+    for _, memberName in ipairs(GetOnlineGroupMembersInOrder()) do
+        if team.admins[memberName] then
+            if masterAdmin and memberName == masterAdmin then
+                return memberName
+            end
+            if not fallbackAdmin then
+                fallbackAdmin = memberName
+            end
+        end
+    end
+
+    return fallbackAdmin
+end
+
+local function ShouldBroadcastLootSheets()
+    local owner = GetLootBroadcastOwner()
+    return owner ~= nil and owner == DKP.playerName
+end
+
 -- rollID → encounterID 映射，用于关联roll物品和Boss
 local rollEncounterMap = {}
 
@@ -319,8 +379,8 @@ f:SetScript("OnEvent", function(self, event, ...)
 
         if itemData then
             DKP.Print("装备入表: " .. itemLink .. " (来自 " .. bossName .. ")")
-            -- 管理员自动广播掉落列表变化
-            if DKP.IsOfficer and DKP.IsOfficer() and DKP.BroadcastSheets then
+            -- 只有主管理员（不在队伍时顺延到下一个在线管理员）自动广播掉落列表变化
+            if ShouldBroadcastLootSheets() and DKP.BroadcastSheets then
                 DKP.BroadcastSheets()
             end
 
