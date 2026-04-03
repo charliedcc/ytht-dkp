@@ -1433,14 +1433,7 @@ local function HandleSheetsChunk(parts, sender)
             if DKP.RefreshTableUI then DKP.RefreshTableUI() end
         end
 
-        if DKP.IsAdminMode() then
-            StaticPopup_Show("YTHT_DKP_SYNC_SHEETS",
-                format("收到来自 |cff00FF00%s|r 的掉落列表\n(%d 个副本)\n\n是否覆盖本地数据？",
-                    senderShort, sheetCount),
-                nil, { apply = applySheets })
-        else
-            applySheets()
-        end
+        applySheets()
     end
 end
 
