@@ -721,8 +721,12 @@ function DKP.ConfirmChatAuctionEntry(entry)
         return
     end
     if not entry or entry.state ~= "CHAT_PENDING" then return end
+    -- 立即标记为已确认，防止同客户端重复点击
+    entry.state = "ENDED"
+
     if not entry.winner or not entry.finalBid or entry.finalBid <= 0 then
         DKP.Print("无法确认: 没有获胜者或出价为0")
+        entry.state = "CHAT_PENDING"  -- 恢复状态
         return
     end
 
@@ -730,6 +734,7 @@ function DKP.ConfirmChatAuctionEntry(entry)
     local playerData = DKP.db and DKP.db.players[entry.winner]
     if not playerData then
         DKP.Print("|cffFF0000无法确认: 玩家 " .. entry.winner .. " 不在DKP名单中|r")
+        entry.state = "CHAT_PENDING"  -- 恢复状态
         return
     end
 
@@ -738,6 +743,7 @@ function DKP.ConfirmChatAuctionEntry(entry)
     if entry.finalBid > currentDKP then
         DKP.Print("|cffFF0000无法确认: " .. entry.winner .. " 当前DKP=" .. currentDKP
             .. "，不足以扣除 " .. entry.finalBid .. "|r")
+        entry.state = "CHAT_PENDING"  -- 恢复状态
         return
     end
 
@@ -745,12 +751,12 @@ function DKP.ConfirmChatAuctionEntry(entry)
     local targetItem = FindLiveItemForChatAuctionEntry(entry)
     if not targetItem then
         DKP.Print("|cffFF0000无法确认: 找不到对应掉落记录，已取消扣分以避免数据不一致|r")
+        entry.state = "CHAT_PENDING"  -- 恢复状态
         return
     end
 
     DKP.AdjustDKP(entry.winner, -entry.finalBid, "聊天竞拍: " .. (entry.itemLink or "物品"))
 
-    entry.state = "ENDED"
     DKP.hasUnsavedChanges = true
 
     -- 始终更新当前 sheets 中的 live item，避免 history 里保存的旧引用失效。
@@ -762,6 +768,8 @@ function DKP.ConfirmChatAuctionEntry(entry)
     -- 广播 DKP 全量数据（与批量操作一致）
     if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
     if DKP.BroadcastSheets then DKP.BroadcastSheets() end
+    -- 广播拍卖记录（同步 state=ENDED 到其他管理员，防止跨客户端重复确认）
+    if DKP.BroadcastAuctionHistoryData then DKP.BroadcastAuctionHistoryData() end
 
     DKP.Print("竞拍已确认: " .. (entry.winnerChar or entry.winner) ..
         " 获得 " .. (entry.itemLink or "物品") .. " (" .. entry.finalBid .. " DKP)")
