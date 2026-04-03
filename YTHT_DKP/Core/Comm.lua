@@ -840,6 +840,8 @@ function DKP.BroadcastSheets()
                 SendChunked(DKP.ADDON_PREFIX, "SYNC_SHEETS", data, channel)
             end
         end
+        -- 广播完成后刷新发送方 UI（防止面板已打开但未刷新的情况）
+        if DKP.RefreshTableUI then DKP.RefreshTableUI() end
     end)
 end
 
