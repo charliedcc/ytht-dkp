@@ -40,11 +40,26 @@ f:SetScript("OnEvent", function(self, event, ...)
             return
         end
 
+        DKP.Print("[AutoTrade] admin check passed, sheets exist")
         wipe(pendingTradeItems)
 
-        local tradeName = GetTradePlayerName()
-        if not tradeName then
-            DKP.Print("[AutoTrade] skip: GetTradePlayerName() returned nil")
+        -- GetTradePlayerName may not exist in some WoW versions; use pcall
+        local ok, tradeName
+        if GetTradePlayerName then
+            ok, tradeName = pcall(GetTradePlayerName)
+            if not ok then
+                DKP.Print("[AutoTrade] ERROR: GetTradePlayerName() threw: " .. tostring(tradeName))
+                tradeName = nil
+            end
+        else
+            DKP.Print("[AutoTrade] WARNING: GetTradePlayerName is nil, trying TradeFrameRecipientNameText")
+            -- Fallback: read from trade frame UI
+            if TradeFrameRecipientNameText then
+                tradeName = TradeFrameRecipientNameText:GetText()
+            end
+        end
+        if not tradeName or tradeName == "" then
+            DKP.Print("[AutoTrade] skip: could not get trade partner name (GetTradePlayerName=" .. tostring(GetTradePlayerName) .. ")")
             return
         end
 

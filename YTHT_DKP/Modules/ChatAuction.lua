@@ -528,6 +528,7 @@ function DKP.EndChatAuction()
         table.insert(historyBids, {
             bidder = bid.charName,
             bidderPlayer = bid.playerName,
+            bidderClass = bid.charClass,
             amount = bid.amount,
             timestamp = bid.timestamp,
             isAllIn = bid.isAllIn,
