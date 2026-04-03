@@ -2,7 +2,7 @@
 ## Title: YTHT DKP
 ## Notes: YTHT Guild DKP Management Addon for WoW 12.0
 ## Author: YTHT Guild
-## Version: 1.0.8
+## Version: 1.0.9
 ## SavedVariables: YTHT_DKP_DB
 
 Core/DB.lua
