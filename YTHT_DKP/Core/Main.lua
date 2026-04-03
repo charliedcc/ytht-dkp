@@ -1150,10 +1150,12 @@ function DKP.ToggleMainFrame()
         end
     else
         DKP.MainFrame:Show()
-        if DKP.MainFrame.activeTab == "loot" then
-            DKP.RefreshTableUI()
-        elseif DKP.RefreshDKPUI then
+        -- 打开面板时始终刷新掉落列表（确保新掉落可见）
+        DKP.RefreshTableUI()
+        if DKP.MainFrame.activeTab == "dkp" and DKP.RefreshDKPUI then
             DKP.RefreshDKPUI()
+        elseif DKP.MainFrame.activeTab == "auctionlog" and DKP.RefreshAuctionLogUI then
+            DKP.RefreshAuctionLogUI()
         end
     end
 end
