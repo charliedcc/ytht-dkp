@@ -20,6 +20,26 @@ local function GetItemMatchKey(itemLink)
     return itemString
 end
 
+-- 安全获取交易对象名（兼容不同 WoW 版本）
+local function SafeGetTradePlayerName()
+    -- 方法1: GetTradePlayerName API
+    if GetTradePlayerName then
+        local ok, name = pcall(GetTradePlayerName)
+        if ok and name then return name end
+    end
+    -- 方法2: 从交易窗口 UI 元素读取
+    if TradeFrameRecipientNameText then
+        local ok, text = pcall(function() return TradeFrameRecipientNameText:GetText() end)
+        if ok and text and text ~= "" then return text end
+    end
+    -- 方法3: UnitName("NPC") — 交易时对方有时注册为 NPC target
+    if UnitName then
+        local ok, name = pcall(UnitName, "NPC")
+        if ok and name then return name end
+    end
+    return nil
+end
+
 local f = CreateFrame("Frame")
 f:RegisterEvent("TRADE_SHOW")
 f:RegisterEvent("UI_INFO_MESSAGE")
@@ -30,21 +50,28 @@ f:SetScript("OnEvent", function(self, event, ...)
     if event == "TRADE_SHOW" then
         DKP.Print("[AutoTrade] TRADE_SHOW triggered, mode=" .. tostring(DKP.db and DKP.db.mode or "nil"))
 
+        local ok, err = pcall(function()
         -- 只有管理模式触发自动交易
         if not DKP.IsAdminMode or not DKP.IsAdminMode() then
             DKP.Print("[AutoTrade] skip: not admin mode (mode=" .. tostring(DKP.db and DKP.db.mode or "nil") .. ")")
             return
         end
+        DKP.Print("[AutoTrade] admin check passed")
+
         if not DKP.db or not DKP.db.sheets then
             DKP.Print("[AutoTrade] skip: no sheets data")
             return
         end
+        local sheetCount = 0
+        for _ in pairs(DKP.db.sheets) do sheetCount = sheetCount + 1 end
+        DKP.Print("[AutoTrade] sheets check passed, " .. sheetCount .. " sheets")
 
         wipe(pendingTradeItems)
 
-        local tradeName = GetTradePlayerName()
+        DKP.Print("[AutoTrade] calling SafeGetTradePlayerName...")
+        local tradeName = SafeGetTradePlayerName()
         if not tradeName then
-            DKP.Print("[AutoTrade] skip: GetTradePlayerName() returned nil")
+            DKP.Print("[AutoTrade] skip: trade player name is nil (GetTradePlayerName=" .. tostring(GetTradePlayerName ~= nil) .. ", TradeFrameRecipientNameText=" .. tostring(TradeFrameRecipientNameText ~= nil) .. ")")
             return
         end
 
@@ -146,6 +173,11 @@ f:SetScript("OnEvent", function(self, event, ...)
         DKP.Print("[AutoTrade] summary: " .. #itemsToTrade .. " candidates, " .. placed .. " placed")
         if placed > 0 then
             DKP.Print("已放入 " .. placed .. " 件装备 (请手动确认交易)")
+        end
+
+        end) -- pcall end
+        if not ok then
+            DKP.Print("[AutoTrade] ERROR: " .. tostring(err))
         end
 
     elseif event == "UI_INFO_MESSAGE" then
