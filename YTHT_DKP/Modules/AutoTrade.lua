@@ -63,6 +63,9 @@ f:SetScript("OnEvent", function(self, event, ...)
             return
         end
 
+        -- Strip UI decorations like (*) suffix from TradeFrameRecipientNameText
+        tradeName = tradeName:gsub("%s*%(%*%)%s*$", "")
+
         local tradeShort = tradeName
         local dashPos = tradeName:find("-", 1, true)
         if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
