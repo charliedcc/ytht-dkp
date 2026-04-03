@@ -63,10 +63,12 @@ f:SetScript("OnEvent", function(self, event, ...)
             return
         end
 
-        local tradeShort = tradeName
-        local dashPos = tradeName:find("-", 1, true)
-        if dashPos then tradeShort = tradeName:sub(1, dashPos - 1) end
-        DKP.Print("[AutoTrade] trade partner: " .. tradeName .. " (short: " .. tradeShort .. ")")
+        -- 清理交易对象名：去掉跨服标记 (*) 和服务器后缀 -Realm
+        local tradeClean = tradeName:gsub("%(%*%)", ""):gsub("%s+$", "")
+        local tradeShort = tradeClean
+        local dashPos = tradeClean:find("-", 1, true)
+        if dashPos then tradeShort = tradeClean:sub(1, dashPos - 1) end
+        DKP.Print("[AutoTrade] trade partner: " .. tradeName .. " (clean: " .. tradeClean .. ", short: " .. tradeShort .. ")")
 
         -- 查找分配给该玩家且未交易的物品
         local itemsToTrade = {}
@@ -81,7 +83,7 @@ f:SetScript("OnEvent", function(self, event, ...)
                         if dp then winnerShort = item.winner:sub(1, dp - 1) end
 
                         local itemName = item.link:match("%[(.-)%]") or item.link
-                        if winnerShort == tradeShort or item.winner == tradeName then
+                        if winnerShort == tradeShort or item.winner == tradeClean or item.winner == tradeName then
                             DKP.Print("[AutoTrade] match: " .. itemName .. " winner=" .. item.winner .. " (sheet: " .. sheetName .. ")")
                             table.insert(itemsToTrade, {
                                 itemData = item,
