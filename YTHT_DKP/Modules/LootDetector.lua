@@ -323,11 +323,14 @@ f:SetScript("OnEvent", function(self, event, ...)
             if DKP.IsOfficer and DKP.IsOfficer() and DKP.BroadcastSheets then
                 DKP.BroadcastSheets()
             end
-        end
 
-        -- 刷新界面（如果已打开）
-        if DKP.MainFrame and DKP.MainFrame:IsShown() then
-            DKP.RefreshTableUI()
+            -- 本地界面有时会和 Boss 结算/roll 事件撞帧，补一次 next-frame refresh。
+            if DKP.RefreshTableUI then
+                DKP.RefreshTableUI()
+                C_Timer.After(0, function()
+                    if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+                end)
+            end
         end
 
         return

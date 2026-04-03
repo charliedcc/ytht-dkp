@@ -62,6 +62,10 @@ local function CanManageChatAuction()
         and DKP.IsAdminMode and DKP.IsAdminMode()
 end
 
+local function GetItemIDFromLink(itemLink)
+    return itemLink and itemLink:match("item:(%d+)") or nil
+end
+
 local function ParseBid(msg)
     msg = msg:match("^%s*(.-)%s*$")
     if not msg or msg == "" then return nil end
@@ -311,6 +315,82 @@ local function FindItemInSheets(itemLink)
     return nil, nil
 end
 
+local function FindChatAuctionPlaceholderItem(instanceName, itemLink)
+    if not DKP.db or not DKP.db.sheets or not instanceName then return nil, nil end
+
+    local sheet = DKP.db.sheets[instanceName]
+    if not sheet then return nil, nil end
+
+    local searchID = GetItemIDFromLink(itemLink)
+    for _, boss in ipairs(sheet.bosses or {}) do
+        if boss.encounterID == 99999 or boss.name == "聊天拍卖" then
+            for _, item in ipairs(boss.items or {}) do
+                if IsUnassigned(item) and item.link then
+                    local itemID = GetItemIDFromLink(item.link)
+                    if item.link == itemLink or (searchID and itemID == searchID) then
+                        return item, boss
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+local function FindLiveItemForChatAuctionEntry(entry)
+    if not entry or not entry.itemLink or not DKP.db or not DKP.db.sheets then
+        return nil
+    end
+
+    local searchID = GetItemIDFromLink(entry.itemLink)
+
+    local function matchesItem(item)
+        if not item or not item.link then return false end
+        if item == entry.itemData then return true end
+        if item.link == entry.itemLink then return true end
+        local itemID = GetItemIDFromLink(item.link)
+        return searchID and itemID and itemID == searchID
+    end
+
+    local function isAssignable(item)
+        return not item.winner or item.winner == ""
+    end
+
+    local function searchItems(requireInstance, requireEncounter, exactLinkOnly)
+        for sheetName, sheet in pairs(DKP.db.sheets or {}) do
+            if not requireInstance or sheetName == entry.instanceName then
+                for _, boss in ipairs(sheet.bosses or {}) do
+                    if not requireEncounter or boss.name == entry.encounterName then
+                        for _, item in ipairs(boss.items or {}) do
+                            if isAssignable(item) and matchesItem(item) then
+                                if not exactLinkOnly or item.link == entry.itemLink then
+                                    return item
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    if entry.itemData and isAssignable(entry.itemData) then
+        local liveByReference = searchItems(false, false, false)
+        if liveByReference == entry.itemData then
+            return liveByReference
+        end
+    end
+
+    return searchItems(true, true, true)
+        or searchItems(true, true, false)
+        or searchItems(true, false, true)
+        or searchItems(true, false, false)
+        or searchItems(false, false, true)
+        or searchItems(false, false, false)
+end
+
 ----------------------------------------------------------------------
 -- 计算当前竞拍结果（每人取最后一次动作）
 ----------------------------------------------------------------------
@@ -401,27 +481,14 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
                     else
                         local foundItem, foundBoss = FindItemInSheets(itemLink)
                         if not foundItem then
-                            -- 检查是否已存在但已分配（不重复添加）
-                            local alreadyExists = false
-                            if DKP.db.sheets then
-                                local searchID = itemLink:match("item:(%d+)")
-                                for _, sheet in pairs(DKP.db.sheets) do
-                                    for _, boss in ipairs(sheet.bosses or {}) do
-                                        for _, item in ipairs(boss.items or {}) do
-                                            if item.link == itemLink or (searchID and item.link and item.link:match("item:(%d+)") == searchID) then
-                                                alreadyExists = true
-                                                break
-                                            end
-                                        end
-                                        if alreadyExists then break end
-                                    end
-                                    if alreadyExists then break end
-                                end
-                            end
+                            local instanceName = DKP.db.currentSheet or "手动记录"
 
-                            if not alreadyExists and DKP.db.options and DKP.db.options.enableAutoAddItem then
+                            -- 若当前聊天拍占位区已有同件未分配物品，直接复用；
+                            -- 不再用全局 itemID 去重，避免合法重复掉落（如兑换物）被挡掉。
+                            foundItem, foundBoss = FindChatAuctionPlaceholderItem(instanceName, itemLink)
+
+                            if not foundItem and DKP.db.options and DKP.db.options.enableAutoAddItem then
                                 -- 自动添加到掉落列表
-                                local instanceName = DKP.db.currentSheet or "手动记录"
                                 if DKP.GetOrCreateSheet then DKP.GetOrCreateSheet(instanceName) end
                                 local bossName = "聊天拍卖"
                                 local encounterID = 99999
@@ -675,55 +742,26 @@ function DKP.ConfirmChatAuctionEntry(entry)
     end
 
     -- 扣除DKP
+    local targetItem = FindLiveItemForChatAuctionEntry(entry)
+    if not targetItem then
+        DKP.Print("|cffFF0000无法确认: 找不到对应掉落记录，已取消扣分以避免数据不一致|r")
+        return
+    end
+
     DKP.AdjustDKP(entry.winner, -entry.finalBid, "聊天竞拍: " .. (entry.itemLink or "物品"))
 
     entry.state = "ENDED"
     DKP.hasUnsavedChanges = true
 
-    -- 更新掉落列表中对应物品
-    -- 优先用 itemData 引用直接更新，回退到掉落表搜索
-    local updated = false
-    if entry.itemData then
-        entry.itemData.winner = entry.winnerChar or entry.winner
-        entry.itemData.winnerClass = entry.winnerClass
-        entry.itemData.dkp = entry.finalBid
-        updated = true
-    end
-    if not updated and entry.itemLink and DKP.db.sheets then
-        local targetItemID = entry.itemLink:match("item:(%d+)")
-        for sheetName, sheet in pairs(DKP.db.sheets) do
-            if not entry.instanceName or sheetName == entry.instanceName then
-            for _, boss in ipairs(sheet.bosses or {}) do
-                if not entry.encounterName or boss.name == entry.encounterName then
-                for _, item in ipairs(boss.items or {}) do
-                    local sameLink = item.link == entry.itemLink
-                    local sameItemID = targetItemID and item.link
-                        and item.link:match("item:(%d+)") == targetItemID
-                    if (sameLink or sameItemID) and (not item.winner or item.winner == "") then
-                        item.winner = entry.winnerChar or entry.winner
-                        item.winnerClass = entry.winnerClass
-                        item.dkp = entry.finalBid
-                        entry.itemData = item
-                        updated = true
-                        break
-                    end
-                end
-                end
-                if updated then break end
-            end
-            end
-            if updated then break end
-        end
-    end
-    if not updated then
-        DKP.Print("|cffFF0000竞拍确认后未找到对应掉落项，自动交易可能无法匹配："
-            .. (entry.itemLink or "物品") .. "|r")
-    elseif DKP.BroadcastSheets then
-        DKP.BroadcastSheets()
-    end
+    -- 始终更新当前 sheets 中的 live item，避免 history 里保存的旧引用失效。
+    targetItem.winner = entry.winnerChar or entry.winner
+    targetItem.winnerClass = entry.winnerClass
+    targetItem.dkp = entry.finalBid
+    entry.itemData = targetItem
 
     -- 广播 DKP 全量数据（与批量操作一致）
     if DKP.BroadcastDKPData then DKP.BroadcastDKPData() end
+    if DKP.BroadcastSheets then DKP.BroadcastSheets() end
 
     DKP.Print("竞拍已确认: " .. (entry.winnerChar or entry.winner) ..
         " 获得 " .. (entry.itemLink or "物品") .. " (" .. entry.finalBid .. " DKP)")
