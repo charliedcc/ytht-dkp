@@ -2122,6 +2122,30 @@ function DKP.OnInitialized()
                     DKP.Print("  /ytht debug popup custom  - 测试自定义Frame弹窗")
                 end
 
+            elseif arg1 == "trade" then
+                -- 显示所有待交易物品（有 winner 但未 traded）
+                if not DKP.db or not DKP.db.sheets then
+                    DKP.Print("[debug trade] 无数据")
+                else
+                    local count = 0
+                    for sheetName, sheet in pairs(DKP.db.sheets) do
+                        for _, boss in ipairs(sheet.bosses or {}) do
+                            for _, item in ipairs(boss.items or {}) do
+                                if item.winner and item.winner ~= "" and item.link and not item.traded then
+                                    local itemName = item.link:match("%[(.-)%]") or item.link
+                                    DKP.Print("  " .. itemName .. " → " .. item.winner .. "  (sheet: " .. sheetName .. ")")
+                                    count = count + 1
+                                end
+                            end
+                        end
+                    end
+                    if count == 0 then
+                        DKP.Print("[debug trade] 没有待交易物品")
+                    else
+                        DKP.Print("[debug trade] 共 " .. count .. " 件待交易")
+                    end
+                end
+
             else
                 DKP.Print("调试命令:")
                 DKP.Print("  /ytht debug additem    - 背包装备添加到掉落列表")
@@ -2130,6 +2154,7 @@ function DKP.OnInitialized()
                 DKP.Print("  /ytht debug reset      - 重置拍卖/session状态")
                 DKP.Print("  /ytht debug chatauction - 聊天自动竞拍开关")
                 DKP.Print("  /ytht debug popup      - 测试弹窗")
+                DKP.Print("  /ytht debug trade      - 显示待交易物品")
             end
 
         elseif cmd == "mode" then

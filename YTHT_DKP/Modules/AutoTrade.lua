@@ -9,6 +9,7 @@
 local DKP = YTHT_DKP
 
 local pendingTradeItems = {}  -- 本次交易放入的 itemData 引用
+local tradeCompleted = false   -- UI_INFO_MESSAGE 确认交易完成
 
 -- 从 itemLink 提取匹配 key（item:ID:enchant:gem1:...）
 -- 比纯 itemID 更精确，能区分不同属性的同一装备
@@ -21,7 +22,9 @@ end
 
 local f = CreateFrame("Frame")
 f:RegisterEvent("TRADE_SHOW")
-f:RegisterEvent("TRADE_ACCEPT_UPDATE")
+f:RegisterEvent("UI_INFO_MESSAGE")
+f:RegisterEvent("TRADE_REQUEST_CANCEL")
+f:RegisterEvent("TRADE_CLOSED")
 
 f:SetScript("OnEvent", function(self, event, ...)
     if event == "TRADE_SHOW" then
@@ -113,8 +116,13 @@ f:SetScript("OnEvent", function(self, event, ...)
 
                             if isMatch then
                                 DKP.Print("[AutoTrade] bag match found at bag=" .. bag .. " slot=" .. slot .. " placing to trade slot " .. (placed + 1))
+                                local tradeSlot = placed + 1
                                 C_Container.PickupContainerItem(bag, slot)
-                                ClickTradeButton(placed + 1)
+                                -- Defer ClickTradeButton by one frame to ensure
+                                -- the cursor has picked up the item before placing
+                                C_Timer.After(0, function()
+                                    ClickTradeButton(tradeSlot)
+                                end)
                                 placed = placed + 1
                                 found = true
                                 usedSlots[slotKey] = true
@@ -140,9 +148,11 @@ f:SetScript("OnEvent", function(self, event, ...)
             DKP.Print("已放入 " .. placed .. " 件装备 (请手动确认交易)")
         end
 
-    elseif event == "TRADE_ACCEPT_UPDATE" then
-        local playerAccepted, targetAccepted = ...
-        if playerAccepted == 1 and targetAccepted == 1 then
+    elseif event == "UI_INFO_MESSAGE" then
+        local _, message = ...
+        if message == ERR_TRADE_COMPLETE then
+            -- 交易成功完成，标记所有 pending 物品为已交易
+            tradeCompleted = true
             for _, itemData in ipairs(pendingTradeItems) do
                 itemData.traded = true
             end
@@ -151,6 +161,29 @@ f:SetScript("OnEvent", function(self, event, ...)
                 DKP.hasUnsavedChanges = true
             end
             wipe(pendingTradeItems)
+        elseif message == ERR_TRADE_CANCELLED
+            or message == ERR_TRADE_BAG_FULL
+            or message == ERR_TRADE_TARGET_BAG_FULL then
+            -- 交易失败，清空 pending 但不标记 traded
+            if #pendingTradeItems > 0 then
+                DKP.Print("[AutoTrade] 交易失败 (" .. message .. ")，" .. #pendingTradeItems .. " 件装备未标记")
+            end
+            wipe(pendingTradeItems)
         end
+
+    elseif event == "TRADE_REQUEST_CANCEL" then
+        -- 交易被取消
+        if #pendingTradeItems > 0 then
+            DKP.Print("[AutoTrade] 交易取消，" .. #pendingTradeItems .. " 件装备未标记")
+        end
+        wipe(pendingTradeItems)
+
+    elseif event == "TRADE_CLOSED" then
+        -- 兜底 cleanup：交易窗口关闭
+        if #pendingTradeItems > 0 and not tradeCompleted then
+            DKP.Print("[AutoTrade] 交易窗口关闭（未检测到完成信号），" .. #pendingTradeItems .. " 件装备未标记")
+        end
+        wipe(pendingTradeItems)
+        tradeCompleted = false
     end
 end)
