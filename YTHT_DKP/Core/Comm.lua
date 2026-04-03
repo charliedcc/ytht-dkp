@@ -1386,8 +1386,104 @@ end
 local pendingSheetsSync = {}
 
 ----------------------------------------------------------------------
--- Sheets 同步接收（管理员需确认）
+-- Sheets 同步接收
 ----------------------------------------------------------------------
+local function CloneSyncTable(value)
+    if type(value) ~= "table" then return value end
+    local out = {}
+    for k, v in pairs(value) do
+        out[k] = CloneSyncTable(v)
+    end
+    return out
+end
+
+local function FindBossByEncounter(sheet, encounterID)
+    if not sheet or not sheet.bosses then return nil end
+    for _, boss in ipairs(sheet.bosses) do
+        if boss.encounterID == encounterID then
+            return boss
+        end
+    end
+    return nil
+end
+
+local function FindMatchingItem(boss, incomingItem)
+    if not boss or not boss.items or not incomingItem then return nil end
+
+    if incomingItem.rollID then
+        for _, item in ipairs(boss.items) do
+            if item.rollID and item.rollID == incomingItem.rollID then
+                return item
+            end
+        end
+    end
+
+    for _, item in ipairs(boss.items) do
+        if item.link == incomingItem.link and (item.rollID or 0) == (incomingItem.rollID or 0) then
+            return item
+        end
+    end
+
+    return nil
+end
+
+local function MergeItemData(localItem, incomingItem)
+    if incomingItem.link and incomingItem.link ~= "" then localItem.link = incomingItem.link end
+    if incomingItem.rollID then localItem.rollID = incomingItem.rollID end
+    if incomingItem.addedAt and (not localItem.addedAt or incomingItem.addedAt < localItem.addedAt) then
+        localItem.addedAt = incomingItem.addedAt
+    end
+    if incomingItem.winner and incomingItem.winner ~= "" then localItem.winner = incomingItem.winner end
+    if incomingItem.winnerClass and incomingItem.winnerClass ~= "" then localItem.winnerClass = incomingItem.winnerClass end
+    if incomingItem.dkp and incomingItem.dkp > 0 then localItem.dkp = incomingItem.dkp end
+    if incomingItem.traded then localItem.traded = true end
+end
+
+local function MergeSheetsInPlace(newSheets)
+    DKP.db.sheets = DKP.db.sheets or {}
+
+    for instanceName, incomingSheet in pairs(newSheets) do
+        local localSheet = DKP.db.sheets[instanceName]
+        if not localSheet then
+            DKP.db.sheets[instanceName] = CloneSyncTable(incomingSheet)
+        else
+            localSheet.bosses = localSheet.bosses or {}
+            if incomingSheet.createdAt and (not localSheet.createdAt or incomingSheet.createdAt < localSheet.createdAt) then
+                localSheet.createdAt = incomingSheet.createdAt
+            end
+
+            for _, incomingBoss in ipairs(incomingSheet.bosses or {}) do
+                local localBoss = FindBossByEncounter(localSheet, incomingBoss.encounterID)
+                if not localBoss then
+                    table.insert(localSheet.bosses, CloneSyncTable(incomingBoss))
+                else
+                    if incomingBoss.name and incomingBoss.name ~= "" then localBoss.name = incomingBoss.name end
+                    if incomingBoss.killed then localBoss.killed = true end
+                    if incomingBoss.killedAt and (not localBoss.killedAt or incomingBoss.killedAt > localBoss.killedAt) then
+                        localBoss.killedAt = incomingBoss.killedAt
+                    end
+                    if incomingBoss.bossIndex and (not localBoss.bossIndex or incomingBoss.bossIndex < localBoss.bossIndex) then
+                        localBoss.bossIndex = incomingBoss.bossIndex
+                    end
+
+                    localBoss.items = localBoss.items or {}
+                    for _, incomingItem in ipairs(incomingBoss.items or {}) do
+                        local localItem = FindMatchingItem(localBoss, incomingItem)
+                        if localItem then
+                            MergeItemData(localItem, incomingItem)
+                        else
+                            table.insert(localBoss.items, CloneSyncTable(incomingItem))
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local team = DKP.GetCurrentTeam and DKP.GetCurrentTeam()
+    if team then team.sheets = DKP.db.sheets end
+end
+
 local function HandleSheetsChunk(parts, sender)
     local chunkIndex = tonumber(parts[2])
     local totalChunks = tonumber(parts[3])
@@ -1424,8 +1520,7 @@ local function HandleSheetsChunk(parts, sender)
         local sheetCount = 0
         for _ in pairs(newSheets) do sheetCount = sheetCount + 1 end
 
-        local function applySheets()
-            -- 完全替换掉落列表（管理员数据为准）
+        local function replaceSheets()
             DKP.db.sheets = newSheets
             local team = DKP.GetCurrentTeam and DKP.GetCurrentTeam()
             if team then team.sheets = newSheets end
@@ -1433,7 +1528,17 @@ local function HandleSheetsChunk(parts, sender)
             if DKP.RefreshTableUI then DKP.RefreshTableUI() end
         end
 
-        applySheets()
+        local function mergeSheets()
+            MergeSheetsInPlace(newSheets)
+            DKP.Print("已自动合并掉落列表 (" .. sheetCount .. " 个副本, 来自 " .. senderShort .. ")")
+            if DKP.RefreshTableUI then DKP.RefreshTableUI() end
+        end
+
+        if DKP.IsOfficer and DKP.IsOfficer() then
+            mergeSheets()
+        else
+            replaceSheets()
+        end
     end
 end
 
