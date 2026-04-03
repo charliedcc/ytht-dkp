@@ -150,23 +150,16 @@ f:SetScript("OnEvent", function(self, event, ...)
         elseif message == ERR_TRADE_CANCELLED
             or message == ERR_TRADE_BAG_FULL
             or message == ERR_TRADE_TARGET_BAG_FULL then
-            if #pendingTradeItems > 0 then
-                DKP.Print("交易失败，" .. #pendingTradeItems .. " 件装备未标记")
-            end
             wipe(pendingTradeItems)
         end
 
     elseif event == "TRADE_REQUEST_CANCEL" then
-        if #pendingTradeItems > 0 then
-            DKP.Print("交易取消，" .. #pendingTradeItems .. " 件装备未标记")
-        end
         wipe(pendingTradeItems)
 
     elseif event == "TRADE_CLOSED" then
-        if #pendingTradeItems > 0 and not tradeCompleted then
-            DKP.Print("交易窗口关闭，" .. #pendingTradeItems .. " 件装备未标记")
+        if not tradeCompleted then
+            wipe(pendingTradeItems)
         end
-        wipe(pendingTradeItems)
         tradeCompleted = false
     end
 end)
