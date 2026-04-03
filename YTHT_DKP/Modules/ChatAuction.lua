@@ -812,7 +812,10 @@ local function CreatePanel()
     closeBtn:SetPoint("TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function()
         if chatAuction and chatAuction.state == "collecting" then
-            DKP.CancelChatAuction()
+            -- 竞拍进行中：只隐藏面板，不取消拍卖
+            -- 可通过掉落列表的"竞拍面板"按钮重新打开
+            panel:Hide()
+            if DKP.RefreshTableUI then DKP.RefreshTableUI() end
         else
             CloseChatAuctionPanel()
         end
