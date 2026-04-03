@@ -47,6 +47,21 @@ local function StripRealm(name)
     return name and name:match("^([^%-]+)") or name
 end
 
+local function GetLocalFullPlayerName()
+    if DKP.playerFullName and DKP.playerFullName ~= "" then
+        return DKP.playerFullName
+    end
+    if DKP.playerName and DKP.playerName ~= "" then
+        return DKP.playerName .. "-" .. GetRealmName()
+    end
+    return DKP.playerName
+end
+
+local function CanManageChatAuction()
+    return DKP.IsOfficer and DKP.IsOfficer()
+        and DKP.IsAdminMode and DKP.IsAdminMode()
+end
+
 local function ParseBid(msg)
     msg = msg:match("^%s*(.-)%s*$")
     if not msg or msg == "" then return nil end
@@ -89,6 +104,153 @@ local function GetCurrentHighestBid()
         end
     end
     return highest
+end
+
+local function BuildDisplayResultFromHistoryEntry(entry)
+    local activeBids = {}
+    local passPlayers = {}
+    local winner = nil
+    local tiedBidders = nil
+    local finalBid = entry and (entry.finalBid or 0) or 0
+
+    if not entry then
+        return activeBids, passPlayers, winner, tiedBidders, finalBid
+    end
+
+    for _, bid in ipairs(entry.bids or {}) do
+        local displayBid = {
+            charName = bid.bidder or bid.bidderPlayer or "?",
+            playerName = bid.bidderPlayer or bid.bidder or "?",
+            charClass = bid.bidderClass or entry.winnerClass or "WARRIOR",
+            bidType = bid.bidType,
+            amount = bid.amount or 0,
+            isAllIn = bid.isAllIn and true or false,
+            playerDKP = bid.playerDKP or 0,
+            rawMessage = bid.rawMessage,
+            timestamp = bid.timestamp or 0,
+            inDKPSystem = bid.bidderPlayer ~= nil,
+        }
+
+        local isPass = bid.bidType == "pass"
+            or ((bid.amount or 0) == 0 and not bid.isAllIn and entry.state ~= "ENDED")
+        if isPass then
+            table.insert(passPlayers, displayBid)
+        else
+            table.insert(activeBids, displayBid)
+        end
+    end
+
+    if entry.tiedBidders and #entry.tiedBidders >= 2 then
+        tiedBidders = {}
+        for _, tb in ipairs(entry.tiedBidders) do
+            table.insert(tiedBidders, {
+                charName = tb.name or tb.playerName or "?",
+                playerName = tb.playerName or tb.name or "?",
+                charClass = entry.winnerClass or "WARRIOR",
+            })
+        end
+    elseif entry.winner then
+        winner = {
+            charName = entry.winnerChar or entry.winner,
+            playerName = entry.winner,
+            charClass = entry.winnerClass or "WARRIOR",
+            amount = finalBid,
+            isAllIn = false,
+        }
+    end
+
+    return activeBids, passPlayers, winner, tiedBidders, finalBid
+end
+
+local function RecordChatAuctionBid(sender, msg, timestamp, isLocalPreview)
+    if not chatAuction or chatAuction.state ~= "collecting" then return false end
+
+    local bidType, bidAmount = ParseBid(msg)
+    if not bidType then return false end
+
+    local charName = StripRealm(sender)
+    local playerName = DKP.GetPlayerByCharacter and DKP.GetPlayerByCharacter(charName) or charName
+
+    local resolvedAmount = bidAmount
+    local isAllIn = false
+    if bidType == "allin" then
+        isAllIn = true
+        local playerData = DKP.db and DKP.db.players[playerName]
+        resolvedAmount = playerData and math.max(0, playerData.dkp or 0) or 0
+    end
+
+    local charClass = "WARRIOR"
+    local playerData = DKP.db and DKP.db.players[playerName]
+    local playerDKP = 0
+    if playerData then
+        playerDKP = playerData.dkp or 0
+        for _, char in ipairs(playerData.characters or {}) do
+            if char.name == charName then
+                charClass = char.class
+                break
+            end
+        end
+    end
+
+    local ch = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+    local shouldBroadcast = (not isLocalPreview) and ch
+        and DKP.IsOfficer and DKP.IsOfficer()
+        and (not DKP.db or not DKP.db.options or DKP.db.options.enableChatAuctionBroadcast ~= false)
+
+    if bidType == "bid" and playerData and resolvedAmount > playerDKP then
+        if shouldBroadcast then
+            SendChatMessage("[竞拍] " .. charName .. " 出价 " .. resolvedAmount
+                .. " 超过DKP余额(" .. playerDKP .. ")，不计入", ch)
+        end
+        return false
+    end
+
+    if bidType ~= "pass" then
+        local prevMax = 0
+        for _, b in ipairs(chatAuction.bids) do
+            if b.playerName == playerName and b.bidType ~= "pass" and b.amount > prevMax then
+                prevMax = b.amount
+            end
+        end
+        if not isAllIn and resolvedAmount <= prevMax then
+            if shouldBroadcast then
+                SendChatMessage("[竞拍] " .. charName .. " 出价 " .. resolvedAmount
+                    .. " 不高于当前出价(" .. prevMax .. ")，不计入", ch)
+            end
+            return false
+        end
+    end
+
+    if isAllIn and shouldBroadcast then
+        SendChatMessage("[竞拍] " .. charName .. " sh = " .. resolvedAmount .. " DKP", ch)
+    end
+
+    local rawMessage = msg:match("^%s*(.-)%s*$")
+    local lastBid = chatAuction.bids[#chatAuction.bids]
+    if lastBid
+        and lastBid.playerName == playerName
+        and lastBid.bidType == bidType
+        and lastBid.amount == resolvedAmount
+        and lastBid.rawMessage == rawMessage
+        and math.abs((lastBid.timestamp or 0) - (timestamp or time())) <= 1 then
+        return false
+    end
+
+    table.insert(chatAuction.bids, {
+        charName = charName,
+        playerName = playerName,
+        charClass = charClass,
+        bidType = bidType,
+        amount = resolvedAmount,
+        isAllIn = isAllIn,
+        playerDKP = playerDKP,
+        rawMessage = rawMessage,
+        timestamp = timestamp or time(),
+        inDKPSystem = playerData ~= nil,
+    })
+
+    if DKP.RefreshChatAuctionPanel then DKP.RefreshChatAuctionPanel() end
+    return true
 end
 
 ----------------------------------------------------------------------
@@ -269,87 +431,7 @@ chatFrame:SetScript("OnEvent", function(self, event, msg, sender, ...)
     -- ② 竞价收集中 → 解析出价
     if chatAuction.state ~= "collecting" then return end
 
-    local bidType, bidAmount = ParseBid(msg)
-    if not bidType then return end
-
-    local charName = StripRealm(sender)
-    local playerName = DKP.GetPlayerByCharacter and DKP.GetPlayerByCharacter(charName) or charName
-
-    -- 解析梭哈金额
-    local resolvedAmount = bidAmount
-    local isAllIn = false
-    if bidType == "allin" then
-        isAllIn = true
-        local playerData = DKP.db and DKP.db.players[playerName]
-        resolvedAmount = playerData and math.max(0, playerData.dkp or 0) or 0
-    end
-
-    -- 获取角色职业 & DKP余额
-    local charClass = "WARRIOR"
-    local playerData = DKP.db and DKP.db.players[playerName]
-    local playerDKP = 0
-    if playerData then
-        playerDKP = playerData.dkp or 0
-        for _, char in ipairs(playerData.characters or {}) do
-            if char.name == charName then
-                charClass = char.class
-                break
-            end
-        end
-    end
-
-    local ch = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
-
-    -- 是否由本客户端广播竞拍通报（仅管理员 + 开关开启）
-    local shouldBroadcast = ch and DKP.IsOfficer and DKP.IsOfficer()
-        and (not DKP.db or not DKP.db.options or DKP.db.options.enableChatAuctionBroadcast ~= false)
-
-    -- 超额出价直接不算（sh 不检查，因为已经是 max(0,DKP)）
-    if bidType == "bid" and playerData and resolvedAmount > playerDKP then
-        if shouldBroadcast then
-            SendChatMessage("[竞拍] " .. charName .. " 出价 " .. resolvedAmount
-                .. " 超过DKP余额(" .. playerDKP .. ")，不计入", ch)
-        end
-        return
-    end
-
-    -- 查找该玩家之前的最高出价（不含 pass）
-    if bidType ~= "pass" then
-        local prevMax = 0
-        for _, b in ipairs(chatAuction.bids) do
-            if b.playerName == playerName and b.bidType ~= "pass" and b.amount > prevMax then
-                prevMax = b.amount
-            end
-        end
-        -- 不允许降低出价（sh 除外，sh 就是全押无论多少）
-        if not isAllIn and resolvedAmount <= prevMax then
-            if shouldBroadcast then
-                SendChatMessage("[竞拍] " .. charName .. " 出价 " .. resolvedAmount
-                    .. " 不高于当前出价(" .. prevMax .. ")，不计入", ch)
-            end
-            return
-        end
-    end
-
-    -- sh 通报到团队频道
-    if isAllIn and shouldBroadcast then
-        SendChatMessage("[竞拍] " .. charName .. " sh = " .. resolvedAmount .. " DKP", ch)
-    end
-
-    table.insert(chatAuction.bids, {
-        charName = charName,
-        playerName = playerName,
-        charClass = charClass,
-        bidType = bidType,
-        amount = resolvedAmount,
-        isAllIn = isAllIn,
-        playerDKP = playerDKP,
-        rawMessage = msg:match("^%s*(.-)%s*$"),
-        timestamp = time(),
-        inDKPSystem = playerData ~= nil,
-    })
-
-    if DKP.RefreshChatAuctionPanel then DKP.RefreshChatAuctionPanel() end
+    RecordChatAuctionBid(sender, msg, time(), false)
 end)
 
 ----------------------------------------------------------------------
@@ -546,6 +628,10 @@ end
 -- 确认聊天竞拍扣分（从拍卖记录调用）
 ----------------------------------------------------------------------
 function DKP.ConfirmChatAuctionEntry(entry)
+    if not CanManageChatAuction() then
+        DKP.Print("只有管理员可确认聊天竞拍扣分")
+        return
+    end
     if not entry or entry.state ~= "CHAT_PENDING" then return end
     if not entry.winner or not entry.finalBid or entry.finalBid <= 0 then
         DKP.Print("无法确认: 没有获胜者或出价为0")
@@ -574,7 +660,7 @@ function DKP.ConfirmChatAuctionEntry(entry)
     DKP.hasUnsavedChanges = true
 
     -- 更新掉落列表中对应物品
-    -- 优先用 itemData 引用直接更新（精确匹配），回退到 itemLink 搜索
+    -- 优先用 itemData 引用直接更新，回退到掉落表搜索
     local updated = false
     if entry.itemData then
         entry.itemData.winner = entry.winnerChar or entry.winner
@@ -583,21 +669,36 @@ function DKP.ConfirmChatAuctionEntry(entry)
         updated = true
     end
     if not updated and entry.itemLink and DKP.db.sheets then
-        for _, sheet in pairs(DKP.db.sheets) do
+        local targetItemID = entry.itemLink:match("item:(%d+)")
+        for sheetName, sheet in pairs(DKP.db.sheets) do
+            if not entry.instanceName or sheetName == entry.instanceName then
             for _, boss in ipairs(sheet.bosses or {}) do
+                if not entry.encounterName or boss.name == entry.encounterName then
                 for _, item in ipairs(boss.items or {}) do
-                    if item.link == entry.itemLink and (not item.winner or item.winner == "") then
+                    local sameLink = item.link == entry.itemLink
+                    local sameItemID = targetItemID and item.link
+                        and item.link:match("item:(%d+)") == targetItemID
+                    if (sameLink or sameItemID) and (not item.winner or item.winner == "") then
                         item.winner = entry.winnerChar or entry.winner
                         item.winnerClass = entry.winnerClass
                         item.dkp = entry.finalBid
+                        entry.itemData = item
                         updated = true
                         break
                     end
                 end
+                end
                 if updated then break end
+            end
             end
             if updated then break end
         end
+    end
+    if not updated then
+        DKP.Print("|cffFF0000竞拍确认后未找到对应掉落项，自动交易可能无法匹配："
+            .. (entry.itemLink or "物品") .. "|r")
+    elseif DKP.BroadcastSheets then
+        DKP.BroadcastSheets()
     end
 
     -- 广播 DKP 全量数据（与批量操作一致）
@@ -733,6 +834,7 @@ local function CreatePanel()
         if not ch then return end
         local text = bidAmountBox:GetText()
         if text and text ~= "" and tonumber(text) then
+            RecordChatAuctionBid(GetLocalFullPlayerName(), text, time(), true)
             SendChatMessage(text, ch)
         end
     end)
@@ -745,7 +847,9 @@ local function CreatePanel()
     bidPlus1Btn:SetScript("OnClick", function()
         local ch = GetChatChannel()
         if not ch then return end
-        SendChatMessage(tostring(GetCurrentHighestBid() + 1), ch)
+        local bidText = tostring(GetCurrentHighestBid() + 1)
+        RecordChatAuctionBid(GetLocalFullPlayerName(), bidText, time(), true)
+        SendChatMessage(bidText, ch)
     end)
     f.bidPlus1Btn = bidPlus1Btn
 
@@ -756,7 +860,9 @@ local function CreatePanel()
     bidPlus5Btn:SetScript("OnClick", function()
         local ch = GetChatChannel()
         if not ch then return end
-        SendChatMessage(tostring(GetCurrentHighestBid() + 5), ch)
+        local bidText = tostring(GetCurrentHighestBid() + 5)
+        RecordChatAuctionBid(GetLocalFullPlayerName(), bidText, time(), true)
+        SendChatMessage(bidText, ch)
     end)
     f.bidPlus5Btn = bidPlus5Btn
 
@@ -767,6 +873,7 @@ local function CreatePanel()
     bidAllInBtn:SetScript("OnClick", function()
         local ch = GetChatChannel()
         if not ch then return end
+        RecordChatAuctionBid(GetLocalFullPlayerName(), "sh", time(), true)
         SendChatMessage("sh", ch)
     end)
     f.bidAllInBtn = bidAllInBtn
@@ -778,6 +885,7 @@ local function CreatePanel()
     bidPassBtn:SetScript("OnClick", function()
         local ch = GetChatChannel()
         if not ch then return end
+        RecordChatAuctionBid(GetLocalFullPlayerName(), "p", time(), true)
         SendChatMessage("p", ch)
     end)
     f.bidPassBtn = bidPassBtn
@@ -788,6 +896,7 @@ local function CreatePanel()
         if not ch then return end
         local text = self:GetText()
         if text and text ~= "" and tonumber(text) then
+            RecordChatAuctionBid(GetLocalFullPlayerName(), text, time(), true)
             SendChatMessage(text, ch)
         end
         self:ClearFocus()
@@ -879,6 +988,10 @@ function DKP.RefreshChatAuctionPanel()
 
     -- 计算结果
     local activeBids, passPlayers, winner, tiedBidders, finalBid = ComputeResult()
+    if chatAuction.state ~= "collecting" and chatAuction.historyEntry then
+        activeBids, passPlayers, winner, tiedBidders, finalBid =
+            BuildDisplayResultFromHistoryEntry(chatAuction.historyEntry)
+    end
 
     -- 状态
     local bidCount = #activeBids
@@ -951,7 +1064,8 @@ function DKP.RefreshChatAuctionPanel()
         -- 竞拍已结束
         f.closeResultBtn:Show()
         -- 有获胜者且待确认 → 显示确认扣分
-        if winner and chatAuction.historyEntry
+        if CanManageChatAuction()
+           and winner and chatAuction.historyEntry
            and chatAuction.historyEntry.state == "CHAT_PENDING" then
             f.confirmBtn:SetText("确认扣分 (" .. winner.charName .. " -" .. finalBid .. ")")
             f.confirmBtn:SetScript("OnClick", function()
@@ -1013,7 +1127,7 @@ function DKP.RefreshChatAuctionPanel()
         local name = DKP.ClassColorText(bid.charName, bid.charClass)
         local amountStr = "|cffFFD700" .. bid.amount .. "|r DKP"
         local allInTag = bid.isAllIn and " |cffFF8800[sh=" .. bid.amount .. "]|r" or ""
-        local rawStr = "|cff666666\"" .. bid.rawMessage .. "\"|r"
+        local rawStr = bid.rawMessage and ("|cff666666\"" .. bid.rawMessage .. "\"|r") or ""
         local notInSystem = (not bid.inDKPSystem) and " |cffFF0000[未注册]|r" or ""
 
         -- 高亮并列
@@ -1027,7 +1141,11 @@ function DKP.RefreshChatAuctionPanel()
             end
         end
 
-        fs:SetText(idx .. "  " .. name .. "  " .. amountStr .. allInTag .. tieTag .. notInSystem .. "  " .. rawStr)
+        local detailText = idx .. "  " .. name .. "  " .. amountStr .. allInTag .. tieTag .. notInSystem
+        if rawStr ~= "" then
+            detailText = detailText .. "  " .. rawStr
+        end
+        fs:SetText(detailText)
         fs:SetTextColor(0.9, 0.9, 0.9)
         yOffset = yOffset - ROW_HEIGHT
     end
@@ -1043,7 +1161,11 @@ function DKP.RefreshChatAuctionPanel()
             local fs = GetFS("GameFontNormalSmall")
             fs:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOffset)
             local name = DKP.ClassColorText(bid.charName, bid.charClass)
-            fs:SetText("    " .. name .. "  |cff888888pass|r  |cff666666\"" .. bid.rawMessage .. "\"|r")
+            local passText = "    " .. name .. "  |cff888888pass|r"
+            if bid.rawMessage and bid.rawMessage ~= "" then
+                passText = passText .. "  |cff666666\"" .. bid.rawMessage .. "\"|r"
+            end
+            fs:SetText(passText)
             yOffset = yOffset - ROW_HEIGHT
         end
     end
@@ -1061,7 +1183,11 @@ function DKP.RefreshChatAuctionPanel()
         yOffset = yOffset - 8
         local hint = GetFS("GameFontNormalSmall")
         hint:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 4, yOffset)
-        hint:SetText("|cffFFCC00已保存到拍卖记录，请在拍卖记录中确认扣分|r")
+        if CanManageChatAuction() then
+            hint:SetText("|cffFFCC00已保存到拍卖记录，请在拍卖记录中确认扣分|r")
+        else
+            hint:SetText("|cffFFCC00已保存到拍卖记录，等待管理员确认扣分|r")
+        end
         yOffset = yOffset - ROW_HEIGHT
     end
 

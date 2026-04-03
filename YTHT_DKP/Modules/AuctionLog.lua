@@ -42,6 +42,11 @@ local bossHeaders = {}
 local selectedEntry = nil
 local detailBidRows = {}
 
+local function CanConfirmChatAuction()
+    return DKP.IsOfficer and DKP.IsOfficer()
+        and DKP.IsAdminMode and DKP.IsAdminMode()
+end
+
 ----------------------------------------------------------------------
 -- Tooltip
 ----------------------------------------------------------------------
@@ -422,7 +427,10 @@ function RefreshDetailPanel()
 
     -- 聊天竞拍确认按钮
     if parent.chatConfirmBtn then
-        if entry.state == "CHAT_PENDING" and entry.isChatAuction and entry.winner then
+        if CanConfirmChatAuction()
+            and entry.state == "CHAT_PENDING"
+            and entry.isChatAuction
+            and entry.winner then
             parent.chatConfirmBtn:SetText("确认扣分 (" .. (entry.winnerChar or entry.winner) .. " -" .. entry.finalBid .. ")")
             parent.chatConfirmBtn:SetScript("OnClick", function()
                 if DKP.ConfirmChatAuctionEntry then
